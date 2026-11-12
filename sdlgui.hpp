@@ -154,7 +154,70 @@ private:
 };
 
 //==============================================================================
-// Font renderer type
+// Font
+//==============================================================================
+class Font
+{
+public:
+    virtual ~Font() {}
+
+    virtual uint64_t id() const
+    {
+        return (uint64_t)(uintptr_t)this;
+    }
+
+    virtual int lineHeight() const { return 16; }
+    virtual int ascent() const { return 16; }
+
+    virtual int measure(const char* text) const = 0;
+    virtual int measureTo(const char* text, int bytePos) const = 0;
+    virtual int advance(uint32_t codepoint) const = 0;
+
+    virtual void draw(SDL_Renderer* renderer, const char* text,
+                      int x, int y, Color color) = 0;
+};
+
+using FontMeasure   = std::function<int(const char*)>;
+using FontMeasureTo = std::function<int(const char*, int)>;
+using FontAdvance   = std::function<int(uint32_t)>;
+using FontDraw      = std::function<void(SDL_Renderer*, const char*,
+                                         int, int, Color)>;
+
+class CallbackFont : public Font
+{
+public:
+    CallbackFont(FontMeasure measure = {},
+                 FontMeasureTo measureTo = {},
+                 FontAdvance advance = {},
+                 FontDraw draw = {},
+                 int lineHeight = 16,
+                 int ascent = 16);
+
+    int lineHeight() const override { return lineHeight_; }
+    int ascent() const override { return ascent_; }
+
+    int measure(const char* text) const override;
+    int measureTo(const char* text, int bytePos) const override;
+    int advance(uint32_t codepoint) const override;
+    void draw(SDL_Renderer* renderer, const char* text,
+              int x, int y, Color color) override;
+
+private:
+    FontMeasure   measure_;
+    FontMeasureTo measureTo_;
+    FontAdvance   advance_;
+    FontDraw      draw_;
+    int           lineHeight_ = 16;
+    int           ascent_ = 16;
+};
+
+void setFont(std::shared_ptr<Font> font);
+Font* currentFont();
+std::shared_ptr<Font> defaultFont();
+uint64_t fontEpoch();
+
+//==============================================================================
+// Legacy font renderer type
 //==============================================================================
 using FontRenderer = void (*)(SDL_Renderer*, const char* text,
                               int x, int y, Color color);
@@ -290,6 +353,8 @@ protected:
     void setRenderOffset(int dx, int dy) { renderOffX_ = dx; renderOffY_ = dy; }
     void setBoundsInternal(int x, int y, int w, int h);
     virtual void layoutChildren();
+    virtual void onFontChanged() { markDirty(); }
+    void notifyFontChanged();
 
     friend class Window;
     friend class Application;
@@ -454,6 +519,7 @@ public:
 
 protected:
     void onRender(SDL_Renderer* renderer) override;
+    void onFontChanged() override;
 
 private:
     std::string text_;
@@ -462,6 +528,7 @@ private:
     std::vector<std::string> layout_;
     int         layoutWidth_ = -1;
     bool        layoutWrap_  = false;
+    uint64_t    layoutFontEpoch_ = 0;
 };
 
 //==============================================================================
@@ -574,6 +641,7 @@ public:
 
 protected:
     void onRender(SDL_Renderer* renderer) override;
+    void onFontChanged() override;
 
 private:
     friend class Application;
@@ -972,6 +1040,7 @@ public:
 
 protected:
     void onRender(SDL_Renderer* renderer) override;
+    void onFontChanged() override;
 
 private:
     friend class Application;
@@ -1098,6 +1167,7 @@ public:
     Window& addWindow(const char* title, int w, int h);
     void    run();
     void    quit();
+    void    refreshFont();
 
     void    setFPS(int fps);
     int     fps() const { return targetFps_; }
@@ -1260,25 +1330,14 @@ const Color Color::Transparent {   0,   0,   0,   0 };
 Application* Application::instance_ = nullptr;
 
 //==============================================================================
-// Font rendering (internal)
+// Font state
 //==============================================================================
 namespace detail {
 
-#ifndef SDLGUI_USE_BUILTIN_FONT
-static FontRenderer customFont_ = nullptr;
-#endif
+static std::shared_ptr<Font> activeFont_;
+static uint64_t fontEpoch_ = 1;
 
 } //namespace detail
-
-void setFontRenderer(FontRenderer fn)
-{
-#ifdef SDLGUI_USE_BUILTIN_FONT
-    (void)fn;
-    //setFontRenderer() is unavailable when SDLGUI_USE_BUILTIN_FONT is defined
-#else
-    detail::customFont_ = fn;
-#endif
-}
 
 namespace detail {
 
@@ -1373,6 +1432,14 @@ private:
 
 } //namespace detail
 
+namespace detail {
+static int glyphWidth(uint32_t codepoint);
+static int textWidth(const char* text);
+static int textWidthTo(const char* text, int bytePos);
+static void drawText(SDL_Renderer* renderer, const char* text,
+                     int x, int y, Color color);
+} //namespace detail
+
 #ifdef SDLGUI_USE_BUILTIN_FONT
 #include "fontData.hpp"
 
@@ -1402,26 +1469,26 @@ static bool hasGlyph8(uint32_t cp)
     return cp < font8CharCount && present[cp];
 }
 
-static int glyphWidth(uint32_t cp)
+static int builtinGlyphWidth(uint32_t cp)
 {
     if (cp < font8CharCount && hasGlyph8(cp)) return 8;
     if (cp < font16CharCount) return 16;
     return 8;
 }
 
-static int textWidth(const char* s)
+static int builtinTextWidth(const char* s)
 {
     int w = 0;
     const char* p = s;
     while (*p)
     {
         uint32_t cp = decodeUTF8(p);
-        w += glyphWidth(cp);
+        w += builtinGlyphWidth(cp);
     }
     return w;
 }
 
-static int textWidthTo(const char* s, int bytePos)
+static int builtinTextWidthTo(const char* s, int bytePos)
 {
     int w = 0;
     const char* p = s;
@@ -1433,7 +1500,7 @@ static int textWidthTo(const char* s, int bytePos)
         int bytes = (int)(p - prev);
         if (consumed + bytes > bytePos) break;
         consumed += bytes;
-        w += glyphWidth(cp);
+        w += builtinGlyphWidth(cp);
     }
     return w;
 }
@@ -1484,10 +1551,12 @@ struct TextCacheKey
 {
     std::string text;
     uint32_t    color = 0;
+    uint64_t    fontEpoch = 0;
 
     bool operator==(const TextCacheKey& other) const
     {
-        return color == other.color && text == other.text;
+        return color == other.color && fontEpoch == other.fontEpoch &&
+               text == other.text;
     }
 };
 
@@ -1496,7 +1565,9 @@ struct TextCacheKeyHash
     std::size_t operator()(const TextCacheKey& k) const
     {
         std::size_t h = std::hash<std::string>()(k.text);
-        return h ^ (std::size_t(k.color) * 2654435761u);
+        h ^= (std::size_t(k.color) * 2654435761u);
+        h ^= (std::size_t(k.fontEpoch) * 2246822519u);
+        return h;
     }
 };
 
@@ -1601,16 +1672,29 @@ static void clearTextCache(SDL_Renderer* renderer)
     textCaches.erase(it);
 }
 
-static void drawText(SDL_Renderer* renderer, const char* text,
-                     int x, int y, Color color)
+static void clearAllTextCaches()
+{
+    for (auto& cache : textCaches)
+    {
+        for (auto& kv : cache.second.entries)
+        {
+            if (kv.second.texture)
+                SDL_DestroyTexture(kv.second.texture);
+        }
+    }
+    textCaches.clear();
+}
+
+static void drawBuiltinText(SDL_Renderer* renderer, const char* text,
+                            int x, int y, Color color)
 {
     if (!text || !*text) return;
 
-    int totalW = textWidth(text);
+    int totalW = builtinTextWidth(text);
     if (totalW <= 0) return;
 
     TextCache& cache = textCaches[renderer];
-    TextCacheKey key{ text, color.toUint32() };
+    TextCacheKey key{ text, color.toUint32(), fontEpoch_ };
 
     SDL_Texture* tex = nullptr;
     auto it = cache.entries.find(key);
@@ -1638,18 +1722,57 @@ static void drawText(SDL_Renderer* renderer, const char* text,
     SDL_RenderTexture(renderer, tex, nullptr, &dst);
 }
 
+class BitmapFont : public Font
+{
+public:
+    int lineHeight() const override { return 16; }
+    int ascent() const override { return 16; }
+
+    int measure(const char* text) const override
+    {
+        return builtinTextWidth(text);
+    }
+
+    int measureTo(const char* text, int bytePos) const override
+    {
+        return builtinTextWidthTo(text, bytePos);
+    }
+
+    int advance(uint32_t codepoint) const override
+    {
+        return builtinGlyphWidth(codepoint);
+    }
+
+    void draw(SDL_Renderer* renderer, const char* text,
+              int x, int y, Color color) override
+    {
+        drawBuiltinText(renderer, text, x, y, color);
+    }
+};
+
 } //namespace detail
 
 #else //not SDLGUI_USE_BUILTIN_FONT
 
 namespace detail {
 
-static int glyphWidth(uint32_t) { return 8; }
-static int textWidth(const char* s) { return (int)std::strlen(s) * 8; }
-static int textWidthTo(const char* s, int bytePos)
+class FallbackFont : public Font
 {
-    return std::min(bytePos, (int)std::strlen(s)) * 8;
-}
+public:
+    int measure(const char* text) const override
+    {
+        return (int)std::strlen(text ? text : "") * 8;
+    }
+
+    int measureTo(const char* text, int bytePos) const override
+    {
+        return std::min(bytePos, (int)std::strlen(text ? text : "")) * 8;
+    }
+
+    int advance(uint32_t) const override { return 8; }
+
+    void draw(SDL_Renderer*, const char*, int, int, Color) override {}
+};
 
 static void wrapText(const char* text, int maxWidth, std::vector<std::string>& out)
 {
@@ -1688,19 +1811,151 @@ static void wrapText(const char* text, int maxWidth, std::vector<std::string>& o
     out.push_back(line);
 }
 
-static void drawText(SDL_Renderer* renderer, const char* text,
-                     int x, int y, Color color)
-{
-    if (customFont_)
-        customFont_(renderer, text, x, y, color);
-    //else: no font available, render nothing
-}
-
 static void clearTextCache(SDL_Renderer*) {}
+static void clearAllTextCaches() {}
 
 } //namespace detail
 
 #endif //SDLGUI_USE_BUILTIN_FONT
+
+//==============================================================================
+// Font dispatch
+//==============================================================================
+namespace detail {
+
+static int glyphWidth(uint32_t codepoint)
+{
+    return currentFont()->advance(codepoint);
+}
+
+static int textWidth(const char* text)
+{
+    return currentFont()->measure(text);
+}
+
+static int textWidthTo(const char* text, int bytePos)
+{
+    return currentFont()->measureTo(text, bytePos);
+}
+
+static void drawText(SDL_Renderer* renderer, const char* text,
+                     int x, int y, Color color)
+{
+    if (!text || !*text) return;
+    currentFont()->draw(renderer, text, x, y, color);
+}
+
+} //namespace detail
+
+CallbackFont::CallbackFont(FontMeasure measure, FontMeasureTo measureTo,
+                           FontAdvance advance, FontDraw draw,
+                           int lineHeight, int ascent)
+    : measure_(std::move(measure)),
+      measureTo_(std::move(measureTo)),
+      advance_(std::move(advance)),
+      draw_(std::move(draw)),
+      lineHeight_(lineHeight),
+      ascent_(ascent)
+{
+}
+
+int CallbackFont::measure(const char* text) const
+{
+    if (measure_) return measure_(text);
+
+    int w = 0;
+    const char* p = text ? text : "";
+    while (*p)
+    {
+        uint32_t cp = detail::decodeUTF8(p);
+        w += advance_ ? advance_(cp) : 8;
+    }
+    return w;
+}
+
+int CallbackFont::measureTo(const char* text, int bytePos) const
+{
+    if (measureTo_) return measureTo_(text, bytePos);
+
+    int w = 0;
+    int consumed = 0;
+    const char* p = text ? text : "";
+    while (*p && consumed < bytePos)
+    {
+        const char* prev = p;
+        uint32_t cp = detail::decodeUTF8(p);
+        int bytes = (int)(p - prev);
+        if (consumed + bytes > bytePos) break;
+        consumed += bytes;
+        w += advance_ ? advance_(cp) : 8;
+    }
+    return w;
+}
+
+int CallbackFont::advance(uint32_t codepoint) const
+{
+    return advance_ ? advance_(codepoint) : 8;
+}
+
+void CallbackFont::draw(SDL_Renderer* renderer, const char* text,
+                        int x, int y, Color color)
+{
+    if (draw_) draw_(renderer, text, x, y, color);
+}
+
+std::shared_ptr<Font> defaultFont()
+{
+#ifdef SDLGUI_USE_BUILTIN_FONT
+    static std::shared_ptr<Font> font = std::make_shared<detail::BitmapFont>();
+#else
+    static std::shared_ptr<Font> font = std::make_shared<detail::FallbackFont>();
+#endif
+    return font;
+}
+
+Font* currentFont()
+{
+    return detail::activeFont_ ? detail::activeFont_.get()
+                               : defaultFont().get();
+}
+
+uint64_t fontEpoch()
+{
+    return detail::fontEpoch_;
+}
+
+void setFont(std::shared_ptr<Font> font)
+{
+    detail::activeFont_ = std::move(font);
+    ++detail::fontEpoch_;
+    detail::clearAllTextCaches();
+
+    if (auto* app = Application::instance())
+        app->refreshFont();
+}
+
+void setFontRenderer(FontRenderer fn)
+{
+#ifdef SDLGUI_USE_BUILTIN_FONT
+    (void)fn;
+    //Use setFont() to override the built-in bitmap font at runtime.
+#else
+    if (!fn)
+    {
+        setFont(nullptr);
+        return;
+    }
+
+    FontDraw draw = [fn](SDL_Renderer* renderer, const char* text,
+                         int x, int y, Color color)
+    {
+        fn(renderer, text, x, y, color);
+    };
+
+    setFont(std::make_shared<CallbackFont>(
+        FontMeasure{}, FontMeasureTo{}, FontAdvance{}, draw, 16, 16));
+#endif
+}
 
 //==============================================================================
 // Widget
@@ -1930,6 +2185,13 @@ void Widget::setEnabled(bool e)
 {
     enabled_ = e;
     markDirty();
+}
+
+void Widget::notifyFontChanged()
+{
+    onFontChanged();
+    for (auto& child : children_)
+        child->notifyFontChanged();
 }
 
 void Widget::onRender(SDL_Renderer* renderer)
@@ -2226,7 +2488,7 @@ void MenuBar::onRender(SDL_Renderer* renderer)
         int tw = detail::textWidth(menus_[i].title.c_str());
         int pw = tw + titlePad_ * 2;
         int tx = r.x + curX + titlePad_;
-        int ty = r.y + (r.h - 16) / 2;
+        int ty = r.y + (r.h - currentFont()->lineHeight()) / 2;
 
         bool highlight = (i == hoveredTitle_) || (i == openIdx_);
         if (highlight)
@@ -2698,6 +2960,14 @@ void Label::setWordWrap(bool wrap)
 {
     wordWrap_ = wrap;
     layoutWidth_ = -1;
+    layoutFontEpoch_ = 0;
+    markDirty();
+}
+
+void Label::onFontChanged()
+{
+    layoutWidth_ = -1;
+    layoutFontEpoch_ = 0;
     markDirty();
 }
 
@@ -2708,21 +2978,24 @@ void Label::onRender(SDL_Renderer* renderer)
     Rect r = absoluteRect();
     detail::ClipGuard clip(renderer, r.x, r.y, r.w, r.h);
 
-    //Layout is cached and only recomputed when text, wrap mode or width changes.
-    if (layoutWidth_ != r.w || layoutWrap_ != wordWrap_)
+    //Layout is cached and only recomputed when text, wrap mode, width or font changes.
+    if (layoutWidth_ != r.w || layoutWrap_ != wordWrap_ ||
+        layoutFontEpoch_ != fontEpoch())
     {
         detail::wrapText(text_.c_str(),
                          wordWrap_ ? r.w : 0x7fffffff, layout_);
         layoutWidth_ = r.w;
         layoutWrap_  = wordWrap_;
+        layoutFontEpoch_ = fontEpoch();
     }
 
+    int lineH = currentFont()->lineHeight();
     int curY = r.y;
     for (const auto& line : layout_)
     {
         if (!line.empty())
             detail::drawText(renderer, line.c_str(), r.x, curY, textColor_);
-        curY += 16;
+        curY += lineH;
     }
 
     for (auto& child : children_)
@@ -2796,7 +3069,7 @@ void Button::onRender(SDL_Renderer* renderer)
     //text
     Color tc = enabled_ ? textColor_ : Color(textColor_.r * 2 / 3, textColor_.g * 2 / 3, textColor_.b * 2 / 3);
     int tx = r.x + (r.w - detail::textWidth(text_.c_str())) / 2;
-    int ty = r.y + (r.h - 16) / 2;
+    int ty = r.y + (r.h - currentFont()->lineHeight()) / 2;
     detail::drawText(renderer, text_.c_str(), tx, ty, tc);
 
     for (auto& child : children_)
@@ -2871,7 +3144,8 @@ void CheckBox::onRender(SDL_Renderer* renderer)
 
     //text
     Color tc = enabled_ ? textColor_ : Color(textColor_.r * 2 / 3, textColor_.g * 2 / 3, textColor_.b * 2 / 3);
-    detail::drawText(renderer, text_.c_str(), r.x + 22, r.y + (r.h - 16) / 2, tc);
+    detail::drawText(renderer, text_.c_str(), r.x + 22,
+                     r.y + (r.h - currentFont()->lineHeight()) / 2, tc);
 
     for (auto& child : children_)
         child->onRender(renderer);
@@ -3246,6 +3520,12 @@ void TextBox::adjustScroll()
     if (scrollOffX_ < minScroll) scrollOffX_ = minScroll;
 }
 
+void TextBox::onFontChanged()
+{
+    adjustScroll();
+    markDirty();
+}
+
 void TextBox::onRender(SDL_Renderer* renderer)
 {
     if (!visible_) return;
@@ -3262,8 +3542,9 @@ void TextBox::onRender(SDL_Renderer* renderer)
     SDL_SetRenderDrawColor(renderer, 140, 140, 140, 255);
     SDL_RenderRect(renderer, &fc);
 
+    int lineH = currentFont()->lineHeight();
     int tx = r.x + 4 + scrollOffX_;
-    int ty = r.y + (r.h - 16) / 2;
+    int ty = r.y + (r.h - lineH) / 2;
 
     //selection background
     if (hasSelection())
@@ -3275,7 +3556,7 @@ void TextBox::onRender(SDL_Renderer* renderer)
 
         if (ex > sx)
         {
-            SDL_FRect sel = { (float)sx, (float)ty, (float)(ex - sx), 16.0f };
+            SDL_FRect sel = { (float)sx, (float)ty, (float)(ex - sx), (float)lineH };
             SDL_SetRenderDrawColor(renderer, selColor_.r, selColor_.g, selColor_.b, selColor_.a);
             SDL_RenderFillRect(renderer, &sel);
         }
@@ -3301,7 +3582,7 @@ void TextBox::onRender(SDL_Renderer* renderer)
             int cx = tx + displayWidthTo(cursorPos_);
             SDL_SetRenderDrawColor(renderer,
                 cursorColor_.r, cursorColor_.g, cursorColor_.b, cursorColor_.a);
-            SDL_RenderLine(renderer, cx, ty, cx, ty + 16);
+            SDL_RenderLine(renderer, cx, ty, cx, ty + lineH);
         }
     }
 
@@ -3907,7 +4188,8 @@ void ComboBox::onRender(SDL_Renderer* renderer)
         SDL_RenderFillRect(renderer, &fic);
 
         int tx = r.x + 4;
-        detail::drawText(renderer, text_.c_str(), tx, r.y + 4, Color::Black);
+        int ty = r.y + (r.h - currentFont()->lineHeight()) / 2;
+        detail::drawText(renderer, text_.c_str(), tx, ty, Color::Black);
 
         //cursor
         uint32_t tick = SDL_GetTicks();
@@ -4011,8 +4293,9 @@ TextArea::TextArea(Widget* parent)
         if (draggingScrollbar() || !mouseSelecting_) return;
 
         //auto-scroll while dragging outside the viewport
-        if (e.y < 0) setScrollOffset(scrollX_, scrollY_ - 16);
-        else if (e.y >= height_) setScrollOffset(scrollX_, scrollY_ + 16);
+        int lineH = currentFont()->lineHeight();
+        if (e.y < 0) setScrollOffset(scrollX_, scrollY_ - lineH);
+        else if (e.y >= height_) setScrollOffset(scrollX_, scrollY_ + lineH);
         if (e.x < 0) setScrollOffset(scrollX_ - 16, scrollY_);
         else if (e.x >= width_) setScrollOffset(scrollX_ + 16, scrollY_);
 
@@ -4213,7 +4496,8 @@ void TextArea::lineColAt(int localX, int localY, int& line, int& col) const
         return;
     }
 
-    line = (localY + scrollY_) / 16;
+    int lineH = std::max(1, currentFont()->lineHeight());
+    line = (localY + scrollY_) / lineH;
     if (line < 0) line = 0;
     if (line >= (int)lines.size()) line = (int)lines.size() - 1;
 
@@ -4236,7 +4520,8 @@ void TextArea::refreshLayout()
     for (auto& l : lines)
         maxW = std::max(maxW, detail::textWidth(l.c_str()) + 8);
 
-    setContentSize(maxW, (int)lines.size() * 16);
+    int lineH = std::max(1, currentFont()->lineHeight());
+    setContentSize(maxW, (int)lines.size() * lineH);
     clampCursor();
     ensureCursorVisible();
     markDirty();
@@ -4249,8 +4534,9 @@ void TextArea::ensureCursorVisible()
     if (cursorLine_ < 0) cursorLine_ = 0;
     if (cursorLine_ >= (int)lines.size()) cursorLine_ = (int)lines.size() - 1;
 
-    int top    = cursorLine_ * 16;
-    int bottom = top + 16;
+    int lineH  = std::max(1, currentFont()->lineHeight());
+    int top    = cursorLine_ * lineH;
+    int bottom = top + lineH;
     if (top < scrollY_)
         setScrollOffset(scrollX_, top);
     else if (bottom > scrollY_ + height_)
@@ -4493,6 +4779,12 @@ void TextArea::moveCursorEnd(bool select)
     markDirty();
 }
 
+void TextArea::onFontChanged()
+{
+    refreshLayout();
+    markDirty();
+}
+
 void TextArea::onRender(SDL_Renderer* renderer)
 {
     if (!visible_) return;
@@ -4508,6 +4800,7 @@ void TextArea::onRender(SDL_Renderer* renderer)
 
     auto lines = splitLines();
     int maxW = 0;
+    int lineH = std::max(1, currentFont()->lineHeight());
 
     bool sel = hasSelection();
     int selSL = 0, selSC = 0, selEL = 0, selEC = 0;
@@ -4516,8 +4809,8 @@ void TextArea::onRender(SDL_Renderer* renderer)
 
     for (int i = 0; i < (int)lines.size(); i++)
     {
-        int ly = r.y + i * 16 - scrollY_;
-        if (ly + 16 < r.y || ly > r.y + r.h) continue;  //skip offscreen
+        int ly = r.y + i * lineH - scrollY_;
+        if (ly + lineH < r.y || ly > r.y + r.h) continue;  //skip offscreen
 
         if (sel && i >= selSL && i <= selEL)
         {
@@ -4530,7 +4823,7 @@ void TextArea::onRender(SDL_Renderer* renderer)
             int x1 = r.x + 4 + detail::textWidthTo(ln.c_str(), c1);
             if (x1 == x0) x1 = x0 + 4; //empty line / newline marker
 
-            SDL_FRect selr = { (float)x0, (float)ly, (float)(x1 - x0), 16.0f };
+            SDL_FRect selr = { (float)x0, (float)ly, (float)(x1 - x0), (float)lineH };
             SDL_SetRenderDrawColor(renderer,
                 selColor_.r, selColor_.g, selColor_.b, selColor_.a);
             SDL_RenderFillRect(renderer, &selr);
@@ -4553,21 +4846,21 @@ void TextArea::onRender(SDL_Renderer* renderer)
                 col = (int)lines[cursorLine_].size();
 
             int cx = r.x + 4 + detail::textWidthTo(lines[cursorLine_].c_str(), col);
-            int cy = r.y + cursorLine_ * 16 - scrollY_;
-            if (cy + 16 >= r.y && cy <= r.y + r.h)
+            int cy = r.y + cursorLine_ * lineH - scrollY_;
+            if (cy + lineH >= r.y && cy <= r.y + r.h)
             {
                 SDL_SetRenderDrawColor(renderer, 200, 200, 200, 255);
-                SDL_RenderLine(renderer, cx, cy, cx, cy + 16);
+                SDL_RenderLine(renderer, cx, cy, cx, cy + lineH);
             }
         }
     }
 
-    //update content size
-    int totalH = (int)lines.size() * 16;
-    if (maxW + 8 > contentW_ || totalH > contentH_)
-    {
-        setContentSize(std::max(contentW_, maxW + 8), std::max(contentH_, totalH));
-    }
+    //update content size (grow and shrink with the viewport/font)
+    int totalH = (int)lines.size() * lineH;
+    int newW = std::max(width_, maxW + 8);
+    int newH = std::max(height_, totalH);
+    if (newW != contentW_ || newH != contentH_)
+        setContentSize(newW, newH);
 
     for (auto& child : children_)
     {
@@ -5109,7 +5402,8 @@ void Window::render()
         SDL_FRect tb = { 0, 0, (float)clientWidth_, (float)bh };
         SDL_SetRenderDrawColor(renderer_, 50, 50, 50, 255);
         SDL_RenderFillRect(renderer_, &tb);
-        detail::drawText(renderer_, title_.c_str(), 6, (bh - 16) / 2, Color::White);
+        detail::drawText(renderer_, title_.c_str(), 6,
+                         (bh - currentFont()->lineHeight()) / 2, Color::White);
 
         //--- minimize [_] ---
         SDL_FRect minBtn = { (float)minX, 0, (float)bsz, (float)bsz };
@@ -5294,6 +5588,17 @@ Window& Application::addWindow(const char* title, int w, int h)
 void Application::quit()
 {
     running_ = false;
+}
+
+void Application::refreshFont()
+{
+    for (auto& win : windows_)
+    {
+        if (!win->root_) continue;
+        win->root_->notifyFontChanged();
+        win->root_->relayout();
+        win->requestRedraw();
+    }
 }
 
 void Application::run()
@@ -6385,12 +6690,13 @@ void MessageBox::renderOverlay(SDL_Renderer* renderer, int windowW, int windowH)
     std::vector<std::string> lines;
     detail::wrapText(message_.c_str(), msgW, lines);
 
+    int lineH = currentFont()->lineHeight();
     int curY = cy;
     for (const auto& line : lines)
     {
         if (!line.empty())
             detail::drawText(renderer, line.c_str(), msgX, curY, Color::White);
-        curY += 16;
+        curY += lineH;
     }
 
     //buttons — use pre-calculated rects from calcLayout
@@ -6406,7 +6712,8 @@ void MessageBox::renderOverlay(SDL_Renderer* renderer, int windowW, int windowH)
         SDL_RenderRect(renderer, &r);
 
         int tx = r.x + (r.w - detail::textWidth(bi.text.c_str())) / 2;
-        detail::drawText(renderer, bi.text.c_str(), tx, r.y + 5, Color::White);
+        int ty = r.y + (int)((r.h - currentFont()->lineHeight()) / 2);
+        detail::drawText(renderer, bi.text.c_str(), tx, ty, Color::White);
     }
 }
 
@@ -6435,11 +6742,12 @@ void MessageBox::calcLayout(int windowW, int windowH)
 
     std::vector<std::string> lines;
     detail::wrapText(message_.c_str(), availW, lines);
+    int lineH = std::max(1, currentFont()->lineHeight());
     int msgLines = (int)lines.size();
-    int msgH = msgLines * 16;
-    if (msgH < 16) msgH = 16;
+    int msgH = msgLines * lineH;
+    if (msgH < lineH) msgH = lineH;
 
-    int contentH = std::max(16, msgH);
+    int contentH = std::max(lineH, msgH);
     dlgH_ = 26 + 8 + contentH + 12 + 26 + 6;
 
     dlgX_ = (windowW - dlgW_) / 2;

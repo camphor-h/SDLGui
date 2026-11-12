@@ -14,8 +14,8 @@
 
 - Single header: `sdlgui.hpp` — drop in and use
 - Retained mode widget tree with automatic clipping
-- Built-in bitmap font via `fontData.hpp` (supports Unicode BMP)
-- Custom font renderer support (`setFontRenderer`)
+- Built-in Unifont bitmap font via `fontData.hpp` (supports Unicode BMP)
+- Runtime font switching via `setFont()` / `Font` metrics, with cache and layout invalidation
 - `addChild<T>()` template — no manual `make_unique` + `move`
 - Chainable position/size API: `pos()->sz()`
 - Opt-in layout: edge anchors, HBox/VBox linear layout, draggable SplitView
@@ -814,23 +814,66 @@ The built-in font uses **two lookup tables** for Unicode BMP (codepoints 0x0000-
 
 **Your `fontData.hpp` can provide both tables.** The bundled file already contains both `font8x16` and the full BMP `font16x16`; you can replace it with your own data using the same format.
 
-#### Custom Font Renderer
+#### Runtime Font Switching
 
-When `SDLGUI_USE_BUILTIN_FONT` is **not** defined, you can supply your own font renderer via:
+The active font can be replaced at runtime:
 
 ```cpp
-sdlgui::setFontRenderer([](SDL_Renderer* r, const char* text,
-                            int x, int y, sdlgui::Color color)
-{
-    // Use SDL_ttf or any other text rendering
-});
+// Switch to a custom/loaded font
+sdlgui::setFont(myFont);
+
+// Switch back to the built-in Unifont (or the fallback font)
+sdlgui::setFont(nullptr);
+
+sdlgui::Font* f = sdlgui::currentFont();
+uint64_t epoch = sdlgui::fontEpoch();
 ```
 
-**Note:** `setFontRenderer()` is a no-op when `SDLGUI_USE_BUILTIN_FONT` is defined (the built-in font wins). Custom-font layout still uses 8px per character for measurement, so glyphs wider than 8px may not align perfectly.
+`Font` exposes the metrics and drawing entry points used by the library:
+
+```cpp
+class Font
+{
+public:
+    virtual int  lineHeight() const;
+    virtual int  ascent() const;
+    virtual int  measure(const char* text) const = 0;
+    virtual int  measureTo(const char* text, int bytePos) const = 0;
+    virtual int  advance(uint32_t codepoint) const = 0;
+    virtual void draw(SDL_Renderer*, const char* text,
+                      int x, int y, Color color) = 0;
+};
+```
+
+A quick adapter is available without subclassing:
+
+```cpp
+auto font = std::make_shared<sdlgui::CallbackFont>(
+    [](const char* s) { return measureText(s); },
+    [](const char* s, int n) { return measurePrefix(s, n); },
+    [](uint32_t cp) { return advance(cp); },
+    [](SDL_Renderer* r, const char* s, int x, int y, sdlgui::Color c) {
+        drawText(r, s, x, y, c);
+    },
+    16, 16); // line height, ascent
+
+sdlgui::setFont(font);
+```
+
+Switching fonts:
+
+- clears cached text textures;
+- bumps `fontEpoch()`, which invalidates `Label` layout caches;
+- refreshes TextBox/TextArea scrolling and marks widgets dirty;
+- requests a redraw.
+
+`CallbackFont` without measurement callbacks falls back to 8px per character. `setFontRenderer()` is kept as a legacy adapter when the built-in font is not compiled in; prefer `setFont()`.
+
+**Note:** widget sizes are still explicit. A font with a larger `lineHeight()` will render correctly in text widgets, but you may need to increase control heights for a comfortable layout.
 
 #### fallback Behavior
 
-Without built-in font and without custom font renderer, `drawText()` is a no-op — no text is rendered, and text width defaults to 8px per character.
+Without a built-in font and without a custom `Font`, `drawText()` is a no-op — no text is rendered, and text width defaults to 8px per character.
 
 ### Color Reference
 
@@ -988,9 +1031,9 @@ cv->onDraw = [](SDL_Renderer* r, const sdlgui::Rect& a)
 - TextArea has no undo/redo, line-number gutter, syntax highlighting, tab indentation, or large-file buffer optimization yet; Tab still moves focus
 - No grid layout, docking, or CSS-style flex; anchors, HBox/VBox and SplitView are the supported layout primitives
 - No fullscreen API; windows are windowed only
-- Fixed 16px bitmap font: no font size, HiDPI scaling, kerning or ligatures
+- The built-in font is a fixed 16px bitmap; runtime `Font` objects can change metrics/drawing, but widget sizes are explicit and there is no automatic HiDPI/kerning/ligature handling
 - Character-level wrapping only (no word-aware line breaking)
-- Custom font renderers are measured as 8px per character
+- Legacy `setFontRenderer()` fonts are measured as 8px per character; use `setFont()` for real metrics
 - DropDown / ComboBox lists are drawn inside the widget, so a sibling added later and overlapping the open list can cover it
 - Redraw-on-demand is whole-window: no partial dirty rectangles
 - IME composition is handled by the OS; the library does not draw inline composition text
@@ -1013,8 +1056,8 @@ BSD 2-Clause License. See [LICENSE](LICENSE).
 
 - 单头文件：`sdlgui.hpp` — 即拿即用
 - 保留模式控件树，自动裁剪
-- 通过 `fontData.hpp` 支持内置位图字体（含 Unicode BMP）
-- 支持外部字体渲染器（`setFontRenderer`）
+- 通过 `fontData.hpp` 支持内置 Unifont 位图字体（含 Unicode BMP）
+- 通过 `setFont()` / `Font` metrics 支持运行时切换字体，并自动失效缓存和布局
 - `addChild<T>()` 模板 — 无需手动 `make_unique` + `move`
 - 可链式调用的位置/大小 API：`pos()->sz()`
 - 自定义标题栏（最小化、最大化、关闭按钮）
@@ -1807,23 +1850,66 @@ img->load("photo.png");
 
 **你可以用完整 BMP 数据替换 `fontData.hpp`。** 仓库自带的文件已经包含 `font8x16` 和完整的 `font16x16`（全 BMP），按相同格式替换即可。
 
-#### 外部字体渲染器
+#### 运行时切换字体
 
-当**未定义** `SDLGUI_USE_BUILTIN_FONT` 时，可通过以下方式自定义字体渲染：
+运行时可以替换当前字体：
 
 ```cpp
-sdlgui::setFontRenderer([](SDL_Renderer* r, const char* text,
-                            int x, int y, sdlgui::Color color)
-{
-    // 使用 SDL_ttf 或任意文本渲染方式
-});
+// 切换到自定义/加载的字体
+sdlgui::setFont(myFont);
+
+// 切回内置 Unifont（或 fallback 字体）
+sdlgui::setFont(nullptr);
+
+sdlgui::Font* f = sdlgui::currentFont();
+uint64_t epoch = sdlgui::fontEpoch();
 ```
 
-**注意：** 定义 `SDLGUI_USE_BUILTIN_FONT` 时 `setFontRenderer()` 是空操作（内置字体优先）。外部字体模式下布局仍按每字符 8px 测量，宽度大于 8px 的字形可能无法精确对齐。
+`Font` 提供库需要的测量和绘制接口：
+
+```cpp
+class Font
+{
+public:
+    virtual int  lineHeight() const;
+    virtual int  ascent() const;
+    virtual int  measure(const char* text) const = 0;
+    virtual int  measureTo(const char* text, int bytePos) const = 0;
+    virtual int  advance(uint32_t codepoint) const = 0;
+    virtual void draw(SDL_Renderer*, const char* text,
+                      int x, int y, Color color) = 0;
+};
+```
+
+不想继承时可以用回调适配器：
+
+```cpp
+auto font = std::make_shared<sdlgui::CallbackFont>(
+    [](const char* s) { return measureText(s); },
+    [](const char* s, int n) { return measurePrefix(s, n); },
+    [](uint32_t cp) { return advance(cp); },
+    [](SDL_Renderer* r, const char* s, int x, int y, sdlgui::Color c) {
+        drawText(r, s, x, y, c);
+    },
+    16, 16); // 行高、ascent
+
+sdlgui::setFont(font);
+```
+
+切换字体会：
+
+- 清空文本纹理缓存；
+- 增加 `fontEpoch()`，使 `Label` 布局缓存失效；
+- 刷新 TextBox/TextArea 的滚动状态并标记控件重绘；
+- 请求窗口重绘。
+
+`CallbackFont` 未提供测量回调时按每字符 8px 兜底。`setFontRenderer()` 仅作为未编译内置字体时的旧接口保留，优先使用 `setFont()`。
+
+**注意：** 控件尺寸仍需显式设置。`lineHeight()` 更大的字体会在文本控件里正确绘制，但可能需要同步增大控件高度。
 
 #### 兜底行为
 
-无内置字体且无外部字体渲染器时，`drawText()` 为空操作——不渲染文本，文本宽度默认每个字符 8px。
+无内置字体且无自定义 `Font` 时，`drawText()` 为空操作——不渲染文本，文本宽度默认每个字符 8px。
 
 ### 颜色参考
 
@@ -1987,9 +2073,9 @@ cv->onDraw = [](SDL_Renderer* r, const sdlgui::Rect& a)
 - TextArea 还没有撤销/重做、行号栏、语法高亮、Tab 缩进和大文件缓冲优化；Tab 仍用于切换焦点
 - 无网格布局、停靠或 CSS 式 flex；布局原语为锚点、HBox/VBox 和 SplitView
 - 无全屏 API，只支持窗口模式
-- 固定 16px 位图字体：无字号、HiDPI 缩放、字距调整或连字
+- 内置字体是固定 16px 位图；运行时 `Font` 可以改变 metrics/绘制，但控件尺寸仍需显式设置，也没有自动 HiDPI/字距/连字处理
 - 仅按字符换行，不做单词级断行
-- 外部字体渲染器按每字符 8px 测量
+- 旧接口 `setFontRenderer()` 按每字符 8px 测量；需要真实 metrics 请用 `setFont()`
 - DropDown / ComboBox 的展开列表画在控件内部，后添加的重叠兄弟控件可能盖住它
 - 按需重绘是整窗级的，没有局部脏矩形
 - 输入法组合文本由系统绘制，库不绘制内联组合文本
