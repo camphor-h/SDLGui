@@ -1109,6 +1109,9 @@ public:
 
 private:
     friend class Application;
+    static SDL_HitTestResult SDLCALL hitTest(SDL_Window* window,
+                                             const SDL_Point* area, void* data);
+
     SDL_Window*   sdlWindow_       = nullptr;
     SDL_Renderer* renderer_        = nullptr;
     std::string   title_;
@@ -5067,7 +5070,7 @@ Window::Window(const char* title, int w, int h, TitleBarMode mode)
     root_->setSize(w, h);
 
     int sdlFlags = 0;
-    if (mode == TitleBarMode::System)
+    if (mode == TitleBarMode::System || resizable_)
         sdlFlags |= SDL_WINDOW_RESIZABLE;
 
     sdlWindow_ = SDL_CreateWindow(title_.c_str(), w, h, sdlFlags);
@@ -5097,7 +5100,38 @@ Window::Window(const char* title, int w, int h, TitleBarMode mode)
             titleBarHeight_ = 30;
         root_->setPosition(0, titleBarHeight_);
         root_->setSize(w, h - titleBarHeight_);
+
+        //Borderless windows need explicit edge hit-testing for OS resize.
+        SDL_SetWindowHitTest(sdlWindow_, &Window::hitTest, this);
     }
+}
+
+SDL_HitTestResult SDLCALL Window::hitTest(SDL_Window* sdlWindow,
+                                          const SDL_Point* area, void* data)
+{
+    auto* self = static_cast<Window*>(data);
+    if (!self || !self->resizable_)
+        return SDL_HITTEST_NORMAL;
+
+    int w = 0, h = 0;
+    SDL_GetWindowSize(sdlWindow, &w, &h);
+
+    const int b = 6;
+    bool left   = area->x < b;
+    bool right  = area->x >= w - b;
+    bool top    = area->y < b;
+    bool bottom = area->y >= h - b;
+
+    if (top && left)     return SDL_HITTEST_RESIZE_TOPLEFT;
+    if (top && right)    return SDL_HITTEST_RESIZE_TOPRIGHT;
+    if (bottom && left)  return SDL_HITTEST_RESIZE_BOTTOMLEFT;
+    if (bottom && right) return SDL_HITTEST_RESIZE_BOTTOMRIGHT;
+    if (left)            return SDL_HITTEST_RESIZE_LEFT;
+    if (right)           return SDL_HITTEST_RESIZE_RIGHT;
+    if (top)             return SDL_HITTEST_RESIZE_TOP;
+    if (bottom)          return SDL_HITTEST_RESIZE_BOTTOM;
+
+    return SDL_HITTEST_NORMAL;
 }
 
 Window::~Window()
