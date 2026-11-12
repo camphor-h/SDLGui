@@ -18,8 +18,9 @@
 - Custom font renderer support (`setFontRenderer`)
 - `addChild<T>()` template — no manual `make_unique` + `move`
 - Chainable position/size API: `pos()->sz()`
+- Opt-in layout: edge anchors, HBox/VBox linear layout, draggable SplitView
 - Custom title bar with minimize, maximize, close buttons
-- TextBox / TextArea / ComboBox editing with caret and clipboard support (TextBox also supports placeholder, password masking, and max length)
+- TextBox / TextArea / ComboBox editing with caret and clipboard support; TextBox also supports placeholder, password masking, and max length; TextBox/TextArea editing keys are rebindable
 - Render-on-demand: idle windows skip Clear / Draw / Present
 - Windowed applications with system or custom title bars via SDL3
 
@@ -165,6 +166,9 @@ Widget* pos(int x, int y);   // calls setPosition()
 Widget* sz(int w, int h);    // calls setSize()
 Widget* vis(bool v);         // calls setVisible()
 Widget* ena(bool v);         // calls setEnabled()
+Widget* anch(int flags);     // calls setAnchors()
+Widget* stretch(float w);    // calls setStretch()
+Widget* fillCross(bool on);  // calls setFillCross()
 ```
 
 | Method | Returns | Description |
@@ -178,6 +182,74 @@ Widget* ena(bool v);         // calls setEnabled()
 | `requestRedraw()` | `void` | Ask the owning window to draw another frame |
 
 Disabled widgets reject hit tests (unclickable) and render dimmed. Disabling a parent disables all children.
+
+#### Layout
+
+Widgets use absolute positioning by default. Layout is opt-in and can be mixed with manual positions.
+
+**Anchors**
+
+```cpp
+auto* editor = root.addChild<sdlgui::Widget>();
+editor->pos(160, 40)->sz(400, 300);
+editor->setAnchors(sdlgui::AnchorLeft | sdlgui::AnchorTop |
+                   sdlgui::AnchorRight | sdlgui::AnchorBottom);
+```
+
+`setAnchors(flags)` captures the current margins from the parent. A left+right pair stretches the width, top+bottom stretches the height, and a right-only/bottom-only anchor keeps the distance to that edge. You can also pass explicit margins:
+
+```cpp
+panel->setAnchors(sdlgui::AnchorLeft | sdlgui::AnchorTop, 8, 8, 0, 0);
+```
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `setAnchors(flags)` | `void` | Anchor to edges, capturing current margins |
+| `setAnchors(flags,l,t,r,b)` | `void` | Anchor with explicit margins |
+| `setAnchorMargins(l,t,r,b)` | `void` | Change margins and re-layout |
+| `anchors()` | `int` | Current anchor flags |
+| `relayout()` | `void` | Force layout of this widget's children |
+| `anch(flags)` | `Widget*` | Chainable `setAnchors` |
+
+**HBox / VBox**
+
+```cpp
+auto* row = root.addChild<sdlgui::HBox>();
+row->pos(0, 0)->sz(600, 36);
+row->setPadding(4);
+row->setSpacing(6);
+
+auto* open = row->addChild<sdlgui::Button>();
+open->sz(80, 28);
+open->txt("Open");
+
+auto* path = row->addChild<sdlgui::TextBox>();
+path->stretch(1.0f);       // take the remaining width
+path->fillCross(true);     // fill the row height
+```
+
+- `HBox` lays out left-to-right, `VBox` top-to-bottom.
+- Fixed-size children keep their current main-axis size.
+- `setStretch(weight)` distributes the remaining main-axis space.
+- `setFillCross(true)` fills the perpendicular axis; otherwise the child keeps its own size.
+- Invisible children are skipped.
+- HBox/VBox manage their direct children, so anchors on those children are ignored.
+
+**SplitView**
+
+```cpp
+auto* split = root.addChild<sdlgui::SplitView>();
+split->setAnchors(sdlgui::AnchorLeft | sdlgui::AnchorTop |
+                  sdlgui::AnchorRight | sdlgui::AnchorBottom);
+split->setOrientation(sdlgui::SplitView::Orientation::SideBySide);
+split->setSplit(0.3f);
+split->setDividerWidth(6);
+
+auto* sidebar = split->addChild<sdlgui::VBox>(); // first visible child
+auto* editor  = split->addChild<sdlgui::VBox>(); // second visible child
+```
+
+`SideBySide` splits left/right; `Stacked` splits top/bottom. Drag the divider to resize; `setMinPaneSize()` limits both panes.
 
 #### Label
 
@@ -297,6 +369,8 @@ pw->setPlaceholder("password");
 | Ctrl+X | Cut selection (no-op if nothing selected) |
 | Ctrl+V | Paste at cursor, replacing selection |
 | Esc | Clear selection |
+
+All editing shortcuts are per-widget rebindable; see **Rebindable Keys** below.
 
 The TextBox automatically scrolls horizontally when text exceeds the visible area, keeping the cursor visible. A horizontal wheel/trackpad gesture or Shift+wheel scrolls it manually. Password display is masked per Unicode character while `text()` and `selectedText()` still return the real text.
 
@@ -630,7 +704,7 @@ Clicking the semi-transparent overlay (outside the dialog) returns `MessageBoxRe
 
 #### TextArea
 
-Multi-line editable text view (inherits ScrollView). Vertical and horizontal scrollbars are enabled by default.
+Multi-line editable text view (inherits ScrollView). Vertical and horizontal scrollbars are enabled by default. Supports selection, drag-select, Shift+click, clipboard and read-only mode.
 
 ```cpp
 auto* ta = root.addChild<sdlgui::TextArea>();
@@ -642,15 +716,43 @@ ta->setText("Line 1\nLine 2\nLine 3");
 |--------|---------|-------------|
 | `setText(string)` | `void` | Set text content and reset the caret |
 | `setTextColor(Color)` | `void` | Set text color |
-| `setReadOnly(bool)` | `void` | Toggle editing |
+| `setSelectionColor(Color)` | `void` | Set selection highlight color |
+| `setReadOnly(bool)` | `void` | Toggle editing (selection/copy still work) |
 | `text()` | `const string&` | Get current text |
+| `hasSelection()` | `bool` | Whether a range is selected |
+| `selectedText()` | `string` | Get selected text (includes newlines) |
+| `selectAll()` / `clearSelection()` | `void` | Select all / clear selection |
 | `setCursor(line, column)` | `void` | Set caret position (byte column) |
 | `cursorLine()` / `cursorColumn()` | `int` | Get caret line / byte column |
-| `insertText(string)` | `void` | Insert text at the caret |
-| `backspace()` / `deleteForward()` | `void` | Delete before/after the caret |
-| `moveCursorLeft/Right/Up/Down/Home/End()` | `void` | Move the caret |
+| `insertText(string)` | `void` | Insert text, replacing the selection |
+| `backspace()` / `deleteForward()` | `void` | Delete selection, or one character |
+| `moveCursorLeft/Right/Up/Down/Home/End(bool select = false)` | `void` | Move the caret; `true` extends the selection |
 
-Editable when focused; `readOnly(true)` blocks all edits. The caret blinks while the TextArea has keyboard focus.
+**Keyboard controls:** Shift+arrows/Home/End extends selection; Ctrl+A selects all; Ctrl+C/Ctrl+X copy/cut; Ctrl+V pastes and replaces the selection; Enter inserts a newline. Mouse drag or Shift+click also selects.
+
+Editable when focused; `readOnly(true)` blocks text changes but still allows selection and copying. The caret blinks while the TextArea has keyboard focus.
+
+#### Rebindable Keys (TextBox / TextArea)
+
+Both text widgets own a `TextKeyMap`; the defaults are the shortcuts listed above.
+
+```cpp
+auto* tb = root.addChild<sdlgui::TextBox>();
+
+// Replace the binding for one action:
+tb->setKeyBinding(sdlgui::TextEditAction::Copy, SDLK_C,
+                  SDL_KMOD_CTRL | SDL_KMOD_SHIFT);
+
+// Add an extra chord for an action:
+tb->keyMap().add(sdlgui::TextEditAction::Paste, SDLK_INSERT, SDL_KMOD_SHIFT);
+
+// Disable one action, disable all shortcuts, or restore defaults:
+tb->keyMap().remove(sdlgui::TextEditAction::Cut);
+tb->keyMap().clear();
+tb->resetKeyBindings();
+```
+
+Available actions: `CursorLeft/Right/Up/Down/Home/End`, `SelectLeft/Right/Up/Down/Home/End`, `SelectAll`, `Copy`, `Cut`, `Paste`, `Backspace`, `DeleteForward`, `InsertNewline`, `ClearSelection`. TextBox ignores cursor-up/down and newline. Only Shift/Ctrl/Alt/GUI are compared; Caps Lock and Num Lock are ignored. `Tab` is still reserved for focus traversal.
 
 #### Image
 
@@ -882,8 +984,9 @@ cv->onDraw = [](SDL_Renderer* r, const sdlgui::Rect& a)
 ### Known Limitations
 
 - Multi-window focus/event routing is implemented, but multi-window apps are still not exhaustively tested
-- Text selection exists in TextBox; TextArea and ComboBox do not have a selection model yet
-- No dynamic layout system (anchors, boxes, grids) — positions are absolute
+- Text selection exists in TextBox and TextArea; ComboBox does not have a selection model yet
+- TextArea has no undo/redo, line-number gutter, syntax highlighting, tab indentation, or large-file buffer optimization yet; Tab still moves focus
+- No grid layout, docking, or CSS-style flex; anchors, HBox/VBox and SplitView are the supported layout primitives
 - No fullscreen API; windows are windowed only
 - Fixed 16px bitmap font: no font size, HiDPI scaling, kerning or ligatures
 - Character-level wrapping only (no word-aware line breaking)
@@ -915,7 +1018,7 @@ BSD 2-Clause License. See [LICENSE](LICENSE).
 - `addChild<T>()` 模板 — 无需手动 `make_unique` + `move`
 - 可链式调用的位置/大小 API：`pos()->sz()`
 - 自定义标题栏（最小化、最大化、关闭按钮）
-- TextBox / TextArea / ComboBox 编辑：光标、剪贴板（TextBox 另支持占位符、密码掩码和最大长度）
+- TextBox / TextArea / ComboBox 编辑：光标、剪贴板（TextBox 另支持占位符、密码掩码和最大长度；TextBox/TextArea 编辑键位可复写）
 - 按需重绘：空闲窗口跳过 Clear / Draw / Present
 - 通过 SDL3 支持窗口（系统标题栏或自定义标题栏）
 
@@ -1061,6 +1164,9 @@ Widget* pos(int x, int y);   // 调用 setPosition()
 Widget* sz(int w, int h);    // 调用 setSize()
 Widget* vis(bool v);         // 调用 setVisible()
 Widget* ena(bool v);         // 调用 setEnabled()
+Widget* anch(int flags);     // 调用 setAnchors()
+Widget* stretch(float w);    // 调用 setStretch()
+Widget* fillCross(bool on);  // 调用 setFillCross()
 ```
 
 | 方法 | 返回 | 说明 |
@@ -1074,6 +1180,74 @@ Widget* ena(bool v);         // 调用 setEnabled()
 | `requestRedraw()` | `void` | 请求所属窗口再绘制一帧 |
 
 禁用控件不响应点击（hitTest 失败），渲染时显示灰色。禁用父控件会连带禁用所有子控件。
+
+#### 布局
+
+控件默认使用绝对定位；布局是可选功能，可以和手动坐标混用。
+
+**锚点**
+
+```cpp
+auto* editor = root.addChild<sdlgui::Widget>();
+editor->pos(160, 40)->sz(400, 300);
+editor->setAnchors(sdlgui::AnchorLeft | sdlgui::AnchorTop |
+                   sdlgui::AnchorRight | sdlgui::AnchorBottom);
+```
+
+`setAnchors(flags)` 会按当前几何位置记录到父控件四边的边距。Left+Right 拉伸宽度，Top+Bottom 拉伸高度，单独 Right/Bottom 则保持到该边的距离。也可以显式指定边距：
+
+```cpp
+panel->setAnchors(sdlgui::AnchorLeft | sdlgui::AnchorTop, 8, 8, 0, 0);
+```
+
+| 方法 | 返回 | 说明 |
+|------|------|------|
+| `setAnchors(flags)` | `void` | 锚定到边，按当前位置记录边距 |
+| `setAnchors(flags,l,t,r,b)` | `void` | 使用显式边距锚定 |
+| `setAnchorMargins(l,t,r,b)` | `void` | 修改边距并重新布局 |
+| `anchors()` | `int` | 当前锚点标志 |
+| `relayout()` | `void` | 强制重新布局子控件 |
+| `anch(flags)` | `Widget*` | 链式 setAnchors |
+
+**HBox / VBox**
+
+```cpp
+auto* row = root.addChild<sdlgui::HBox>();
+row->pos(0, 0)->sz(600, 36);
+row->setPadding(4);
+row->setSpacing(6);
+
+auto* open = row->addChild<sdlgui::Button>();
+open->sz(80, 28);
+open->txt("打开");
+
+auto* path = row->addChild<sdlgui::TextBox>();
+path->stretch(1.0f);       // 占满剩余宽度
+path->fillCross(true);     // 填满行高
+```
+
+- `HBox` 从左到右排列，`VBox` 从上到下排列。
+- 未设置 stretch 的子控件保持当前主轴尺寸。
+- `setStretch(weight)` 按权重分配剩余主轴空间。
+- `setFillCross(true)` 填满交叉轴；否则保持自身尺寸。
+- 不可见子控件会被跳过。
+- HBox/VBox 管理直接子控件，因此这些子控件上的锚点会被忽略。
+
+**SplitView**
+
+```cpp
+auto* split = root.addChild<sdlgui::SplitView>();
+split->setAnchors(sdlgui::AnchorLeft | sdlgui::AnchorTop |
+                  sdlgui::AnchorRight | sdlgui::AnchorBottom);
+split->setOrientation(sdlgui::SplitView::Orientation::SideBySide);
+split->setSplit(0.3f);
+split->setDividerWidth(6);
+
+auto* sidebar = split->addChild<sdlgui::VBox>(); // 第一个可见子控件
+auto* editor  = split->addChild<sdlgui::VBox>(); // 第二个可见子控件
+```
+
+`SideBySide` 左右分栏，`Stacked` 上下分栏。拖动分隔条调整比例；`setMinPaneSize()` 限制两侧最小尺寸。
 
 #### Label（文本标签）
 
@@ -1193,6 +1367,8 @@ pw->setPlaceholder("密码");
 | Ctrl+X | 剪切选择区（无选择时无操作） |
 | Ctrl+V | 在光标处粘贴，替换选择区 |
 | Esc | 取消选择 |
+
+所有编辑快捷键都支持按控件复写，见下文 **键位复写**。
 
 TextBox 在文本超出可见区域时自动水平滚动，保持光标可见。横向滚轮/触摸板手势或 Shift+滚轮可手动水平滚动。密码模式按 Unicode 字符显示掩码，但 `text()` 和 `selectedText()` 仍返回真实文本。
 
@@ -1525,7 +1701,7 @@ sdlgui::MessageBoxResult r = win.showMessageBoxBlocking(
 
 #### TextArea（多行文本）
 
-多行可编辑文本（继承 ScrollView），默认启用垂直和水平滚动条。
+多行可编辑文本（继承 ScrollView），默认启用垂直和水平滚动条。支持选择区、拖动选择、Shift+点击、剪贴板和只读模式。
 
 ```cpp
 auto* ta = root.addChild<sdlgui::TextArea>();
@@ -1537,15 +1713,43 @@ ta->setText("第一行\n第二行\n第三行");
 |------|------|------|
 | `setText(string)` | `void` | 设置文本并重置光标 |
 | `setTextColor(Color)` | `void` | 设置文字颜色 |
-| `setReadOnly(bool)` | `void` | 切换只读模式（阻止编辑） |
+| `setSelectionColor(Color)` | `void` | 设置选择区背景色 |
+| `setReadOnly(bool)` | `void` | 切换只读模式（仍可选择/复制） |
 | `text()` | `const string&` | 获取当前文本 |
+| `hasSelection()` | `bool` | 是否有选中文本 |
+| `selectedText()` | `string` | 获取选中文本（包含换行符） |
+| `selectAll()` / `clearSelection()` | `void` | 全选 / 取消选择 |
 | `setCursor(line, column)` | `void` | 设置光标（字节列） |
 | `cursorLine()` / `cursorColumn()` | `int` | 获取光标行/字节列 |
-| `insertText(string)` | `void` | 在光标处插入文本 |
-| `backspace()` / `deleteForward()` | `void` | 删除光标前/后字符 |
-| `moveCursorLeft/Right/Up/Down/Home/End()` | `void` | 移动光标 |
+| `insertText(string)` | `void` | 在光标处插入文本，替换选择区 |
+| `backspace()` / `deleteForward()` | `void` | 删除选择区，或删除一个字符 |
+| `moveCursorLeft/Right/Up/Down/Home/End(bool select = false)` | `void` | 移动光标；`true` 扩展选择区 |
 
-获得焦点时可编辑，`readOnly(true)` 阻止所有编辑；光标在获得键盘焦点时闪烁。
+**键盘控制：** Shift+方向键/Home/End 扩展选择区；Ctrl+A 全选；Ctrl+C/Ctrl+X 复制/剪切；Ctrl+V 粘贴并替换选择区；Enter 插入换行。鼠标拖动或 Shift+点击也可选择。
+
+获得焦点时可编辑，`readOnly(true)` 阻止文本修改但仍可选择和复制；光标在获得键盘焦点时闪烁。
+
+#### 键位复写（TextBox / TextArea）
+
+两个文本控件各自持有一个 `TextKeyMap`，默认绑定就是上面列出的快捷键。
+
+```cpp
+auto* tb = root.addChild<sdlgui::TextBox>();
+
+// 替换某个动作的键位：
+tb->setKeyBinding(sdlgui::TextEditAction::Copy, SDLK_C,
+                  SDL_KMOD_CTRL | SDL_KMOD_SHIFT);
+
+// 给同一个动作追加一个键位：
+tb->keyMap().add(sdlgui::TextEditAction::Paste, SDLK_INSERT, SDL_KMOD_SHIFT);
+
+// 删除某个动作、清空所有快捷键、恢复默认：
+tb->keyMap().remove(sdlgui::TextEditAction::Cut);
+tb->keyMap().clear();
+tb->resetKeyBindings();
+```
+
+可用动作：`CursorLeft/Right/Up/Down/Home/End`、`SelectLeft/Right/Up/Down/Home/End`、`SelectAll`、`Copy`、`Cut`、`Paste`、`Backspace`、`DeleteForward`、`InsertNewline`、`ClearSelection`。TextBox 会忽略上下移动和换行动作。只比较 Shift/Ctrl/Alt/GUI 修饰键，Caps Lock/Num Lock 不影响匹配。`Tab` 目前仍保留给焦点切换。
 
 #### Image（图片）
 
@@ -1779,8 +1983,9 @@ cv->onDraw = [](SDL_Renderer* r, const sdlgui::Rect& a)
 ### 已知限制
 
 - 多窗口的焦点/事件路由已实现，但多窗口场景仍未充分测试
-- TextBox 已有选择区；TextArea / ComboBox 还没有选择模型
-- 无动态布局系统（锚点、盒子、网格）——位置为绝对值
+- TextBox 和 TextArea 已有选择区；ComboBox 还没有选择模型
+- TextArea 还没有撤销/重做、行号栏、语法高亮、Tab 缩进和大文件缓冲优化；Tab 仍用于切换焦点
+- 无网格布局、停靠或 CSS 式 flex；布局原语为锚点、HBox/VBox 和 SplitView
 - 无全屏 API，只支持窗口模式
 - 固定 16px 位图字体：无字号、HiDPI 缩放、字距调整或连字
 - 仅按字符换行，不做单词级断行

@@ -86,6 +86,17 @@ struct Color
 };
 
 //==============================================================================
+// Layout anchors
+//==============================================================================
+enum AnchorFlag : uint8_t
+{
+    AnchorLeft   = 1 << 0,
+    AnchorRight  = 1 << 1,
+    AnchorTop    = 1 << 2,
+    AnchorBottom = 1 << 3
+};
+
+//==============================================================================
 // MouseEvent
 //==============================================================================
 struct MouseEvent
@@ -104,6 +115,42 @@ struct KeyEvent
     SDL_Keycode key  = 0;
     uint16_t    mod  = 0;
     char        text = 0;
+};
+
+//==============================================================================
+// Text editing key bindings
+//==============================================================================
+enum class TextEditAction
+{
+    None,
+    CursorLeft, CursorRight, CursorUp, CursorDown, CursorHome, CursorEnd,
+    SelectLeft, SelectRight, SelectUp, SelectDown, SelectHome, SelectEnd,
+    SelectAll, Copy, Cut, Paste,
+    Backspace, DeleteForward, InsertNewline, ClearSelection
+};
+
+class TextKeyMap
+{
+public:
+    TextKeyMap();
+
+    void reset();
+    void clear();
+    void set(TextEditAction action, SDL_Keycode key, SDL_Keymod mod = SDL_KMOD_NONE);
+    void add(TextEditAction action, SDL_Keycode key, SDL_Keymod mod = SDL_KMOD_NONE);
+    void remove(TextEditAction action);
+    TextEditAction find(SDL_Keycode key, SDL_Keymod mod) const;
+
+private:
+    struct Binding
+    {
+        TextEditAction action;
+        SDL_Keycode    key;
+        uint16_t       mod;
+    };
+
+    std::vector<Binding> bindings_;
+    static uint16_t normalize(SDL_Keymod mod);
 };
 
 //==============================================================================
@@ -144,7 +191,7 @@ public:
     {
         auto c = std::make_unique<T>(this, std::forward<Args>(args)...);
         auto* r = c.get();
-        children_.push_back(std::move(c));
+        addChild(std::move(c));
         return r;
     }
 
@@ -163,11 +210,25 @@ public:
     void      setFocusable(bool f) { focusable_ = f; }
     bool      focusable() const { return focusable_; }
 
+    //layout
+    void      setAnchors(int flags);
+    void      setAnchors(int flags, int left, int top, int right, int bottom);
+    void      setAnchorMargins(int left, int top, int right, int bottom);
+    int       anchors() const { return anchorFlags_; }
+    void      setStretch(float weight);
+    float     stretchWeight() const { return layoutStretch_; }
+    void      setFillCross(bool on);
+    bool      fillCross() const { return fillCross_; }
+    void      relayout();
+
     //chain aliases
     Widget* pos(int x, int y) { setPosition(x, y); return this; }
     Widget* sz(int w, int h)  { setSize(w, h); return this; }
     Widget* vis(bool v)       { setVisible(v); return this; }
     Widget* ena(bool v)       { setEnabled(v); return this; }
+    Widget* anch(int flags)   { setAnchors(flags); return this; }
+    Widget* stretch(float w)  { setStretch(w); return this; }
+    Widget* fillCross(bool on = true) { setFillCross(on); return this; }
 
     //window access
     class Window* getWindow() const { return window_; }
@@ -215,17 +276,111 @@ protected:
     bool   focusable_ = false;
     bool   dirty_ = true;
 
+    uint8_t anchorFlags_ = 0;
+    int     anchorL_ = 0, anchorT_ = 0, anchorR_ = 0, anchorB_ = 0;
+    float   layoutStretch_ = 0.0f;
+    bool    fillCross_ = false;
+    bool    layingOut_ = false;
+
     Widget* parent_ = nullptr;
     class Window* window_ = nullptr;
     std::vector<std::unique_ptr<Widget>> children_;
 
     void setWindowRecursive(class Window* w);
     void setRenderOffset(int dx, int dy) { renderOffX_ = dx; renderOffY_ = dy; }
+    void setBoundsInternal(int x, int y, int w, int h);
+    virtual void layoutChildren();
 
     friend class Window;
     friend class Application;
     friend class ScrollView;
     friend class TextArea;
+    friend class Box;
+    friend class SplitView;
+};
+
+//==============================================================================
+// Box — horizontal / vertical linear layout
+//==============================================================================
+class Box : public Widget
+{
+public:
+    enum class Orientation { Horizontal, Vertical };
+
+    explicit Box(Widget* parent = nullptr,
+                 Orientation orientation = Orientation::Horizontal);
+
+    void setOrientation(Orientation o);
+    Orientation orientation() const { return orientation_; }
+
+    void setPadding(int padding);
+    int  padding() const { return padding_; }
+
+    void setSpacing(int spacing);
+    int  spacing() const { return spacing_; }
+
+protected:
+    void layoutChildren() override;
+
+private:
+    Orientation orientation_ = Orientation::Horizontal;
+    int padding_ = 0;
+    int spacing_ = 0;
+};
+
+class HBox : public Box
+{
+public:
+    explicit HBox(Widget* parent = nullptr)
+        : Box(parent, Orientation::Horizontal) {}
+};
+
+class VBox : public Box
+{
+public:
+    explicit VBox(Widget* parent = nullptr)
+        : Box(parent, Orientation::Vertical) {}
+};
+
+//==============================================================================
+// SplitView — two panes with a draggable divider
+//==============================================================================
+class SplitView : public Widget
+{
+public:
+    enum class Orientation { SideBySide, Stacked };
+
+    explicit SplitView(Widget* parent = nullptr);
+
+    void setOrientation(Orientation o);
+    Orientation orientation() const { return orientation_; }
+
+    void setSplit(float ratio);
+    float split() const { return ratio_; }
+
+    void setMinPaneSize(int px);
+    int  minPaneSize() const { return minPane_; }
+
+    void setDividerWidth(int px);
+    int  dividerWidth() const { return dividerW_; }
+
+    void setDividerColor(Color color);
+    Color dividerColor() const { return dividerColor_; }
+
+protected:
+    void layoutChildren() override;
+    void onRender(SDL_Renderer* renderer) override;
+
+private:
+    int dividerPos() const;
+    void splitFromMouse(int localX, int localY);
+
+    Orientation orientation_ = Orientation::SideBySide;
+    float ratio_ = 0.5f;
+    int   minPane_ = 40;
+    int   dividerW_ = 6;
+    Color dividerColor_ = Color(70, 70, 75);
+    bool  dragging_ = false;
 };
 
 //==============================================================================
@@ -390,6 +545,13 @@ public:
     void     insertText(const std::string& text);
     bool     scrollByPixels(int dx);
     void     adjustScroll();
+
+    TextKeyMap&       keyMap()       { return keyMap_; }
+    const TextKeyMap& keyMap() const { return keyMap_; }
+    void setKeyBinding(TextEditAction action, SDL_Keycode key,
+                       SDL_Keymod mod = SDL_KMOD_NONE)
+    { keyMap_.set(action, key, mod); }
+    void resetKeyBindings() { keyMap_.reset(); }
     const std::string& text() const { return text_; }
     const std::string& placeholder() const { return placeholder_; }
     int  maxLength() const { return maxLength_; }
@@ -440,6 +602,7 @@ private:
     bool        mouseSelecting_ = false;
     uint32_t    focusTick_  = 0;
     int         scrollOffX_ = 0;
+    TextKeyMap  keyMap_;
 };
 
 //==============================================================================
@@ -772,9 +935,22 @@ public:
     void     setText(const std::string& text);
     void     setTextColor(Color color);
     void     setReadOnly(bool ro);
+    void     setSelectionColor(Color color);
     const std::string& text()     const { return text_; }
     Color    textColor()          const { return textColor_; }
     bool     readOnly()           const { return readOnly_; }
+
+    bool        hasSelection() const;
+    std::string selectedText() const;
+    void        selectAll();
+    void        clearSelection();
+
+    TextKeyMap&       keyMap()       { return keyMap_; }
+    const TextKeyMap& keyMap() const { return keyMap_; }
+    void setKeyBinding(TextEditAction action, SDL_Keycode key,
+                       SDL_Keymod mod = SDL_KMOD_NONE)
+    { keyMap_.set(action, key, mod); }
+    void resetKeyBindings() { keyMap_.reset(); }
 
     //editing (used by Application, also available to callers)
     void setCursor(int line, int col);
@@ -784,12 +960,12 @@ public:
     void insertText(const std::string& text);
     void backspace();
     void deleteForward();
-    void moveCursorLeft();
-    void moveCursorRight();
-    void moveCursorUp();
-    void moveCursorDown();
-    void moveCursorHome();
-    void moveCursorEnd();
+    void moveCursorLeft(bool select = false);
+    void moveCursorRight(bool select = false);
+    void moveCursorUp(bool select = false);
+    void moveCursorDown(bool select = false);
+    void moveCursorHome(bool select = false);
+    void moveCursorEnd(bool select = false);
 
     Widget* txt(const std::string& s) { setText(s); return this; }
     Widget* clr(Color c)              { setTextColor(c); return this; }
@@ -802,16 +978,23 @@ private:
     std::string text_;
     Color       textColor_ = Color::White;
     Color       bgColor_   = Color(25, 25, 28);
+    Color       selColor_  = Color(50, 100, 180, 180);
     bool        readOnly_  = false;
     int         cursorLine_ = 0, cursorCol_ = 0;
+    int         selAnchorLine_ = -1, selAnchorCol_ = -1;
+    bool        mouseSelecting_ = false;
     bool        cursorVisible_ = false;
     uint32_t    cursorTick_ = 0;
+    TextKeyMap  keyMap_;
 
     std::vector<std::string> splitLines() const;
     std::size_t offsetAt(int line, int col) const;
     void        clampCursor();
     void        refreshLayout();
     void        ensureCursorVisible();
+    bool        deleteSelection();
+    void        selectionBounds(int& sl, int& sc, int& el, int& ec) const;
+    void        lineColAt(int localX, int localY, int& line, int& col) const;
 };
 
 //==============================================================================
@@ -957,6 +1140,110 @@ private:
 // Implementation
 //==============================================================================
 #ifdef SDLGUI_IMPLEMENTATION
+
+//==============================================================================
+// TextKeyMap
+//==============================================================================
+TextKeyMap::TextKeyMap()
+{
+    reset();
+}
+
+uint16_t TextKeyMap::normalize(SDL_Keymod mod)
+{
+    return (uint16_t)(mod & (SDL_KMOD_SHIFT | SDL_KMOD_CTRL |
+                             SDL_KMOD_ALT | SDL_KMOD_GUI));
+}
+
+void TextKeyMap::clear()
+{
+    bindings_.clear();
+}
+
+void TextKeyMap::set(TextEditAction action, SDL_Keycode key, SDL_Keymod mod)
+{
+    if (key == SDLK_UNKNOWN)
+    {
+        remove(action);
+        return;
+    }
+
+    uint16_t m = normalize(mod);
+    bindings_.erase(
+        std::remove_if(bindings_.begin(), bindings_.end(),
+            [action, key, m](const Binding& b)
+            {
+                return b.action == action || (b.key == key && b.mod == m);
+            }),
+        bindings_.end());
+
+    bindings_.push_back({ action, key, m });
+}
+
+void TextKeyMap::add(TextEditAction action, SDL_Keycode key, SDL_Keymod mod)
+{
+    if (key == SDLK_UNKNOWN) return;
+
+    uint16_t m = normalize(mod);
+    bindings_.erase(
+        std::remove_if(bindings_.begin(), bindings_.end(),
+            [key, m](const Binding& b)
+            {
+                return b.key == key && b.mod == m;
+            }),
+        bindings_.end());
+
+    bindings_.push_back({ action, key, m });
+}
+
+void TextKeyMap::remove(TextEditAction action)
+{
+    bindings_.erase(
+        std::remove_if(bindings_.begin(), bindings_.end(),
+            [action](const Binding& b) { return b.action == action; }),
+        bindings_.end());
+}
+
+TextEditAction TextKeyMap::find(SDL_Keycode key, SDL_Keymod mod) const
+{
+    uint16_t m = normalize(mod);
+    for (const auto& b : bindings_)
+    {
+        if (b.key == key && b.mod == m)
+            return b.action;
+    }
+    return TextEditAction::None;
+}
+
+void TextKeyMap::reset()
+{
+    clear();
+
+    set(TextEditAction::CursorLeft,  SDLK_LEFT,  SDL_KMOD_NONE);
+    set(TextEditAction::CursorRight, SDLK_RIGHT, SDL_KMOD_NONE);
+    set(TextEditAction::CursorUp,    SDLK_UP,    SDL_KMOD_NONE);
+    set(TextEditAction::CursorDown,  SDLK_DOWN,  SDL_KMOD_NONE);
+    set(TextEditAction::CursorHome,  SDLK_HOME,  SDL_KMOD_NONE);
+    set(TextEditAction::CursorEnd,   SDLK_END,   SDL_KMOD_NONE);
+
+    set(TextEditAction::SelectLeft,  SDLK_LEFT,  SDL_KMOD_SHIFT);
+    set(TextEditAction::SelectRight, SDLK_RIGHT, SDL_KMOD_SHIFT);
+    set(TextEditAction::SelectUp,    SDLK_UP,    SDL_KMOD_SHIFT);
+    set(TextEditAction::SelectDown,  SDLK_DOWN,  SDL_KMOD_SHIFT);
+    set(TextEditAction::SelectHome,  SDLK_HOME,  SDL_KMOD_SHIFT);
+    set(TextEditAction::SelectEnd,   SDLK_END,   SDL_KMOD_SHIFT);
+
+    set(TextEditAction::SelectAll, SDLK_A, SDL_KMOD_CTRL);
+    set(TextEditAction::Copy,      SDLK_C, SDL_KMOD_CTRL);
+    set(TextEditAction::Cut,       SDLK_X, SDL_KMOD_CTRL);
+    set(TextEditAction::Paste,     SDLK_V, SDL_KMOD_CTRL);
+
+    set(TextEditAction::Backspace,     SDLK_BACKSPACE, SDL_KMOD_NONE);
+    set(TextEditAction::DeleteForward, SDLK_DELETE,    SDL_KMOD_NONE);
+    set(TextEditAction::InsertNewline, SDLK_RETURN,    SDL_KMOD_NONE);
+    add(TextEditAction::InsertNewline, SDLK_KP_ENTER,  SDL_KMOD_NONE);
+    set(TextEditAction::ClearSelection, SDLK_ESCAPE,   SDL_KMOD_NONE);
+}
 
 //==============================================================================
 // Color constants
@@ -1443,9 +1730,143 @@ void Widget::setPosition(int x, int y)
 
 void Widget::setSize(int w, int h)
 {
+    if (w < 0) w = 0;
+    if (h < 0) h = 0;
+    if (w == width_ && h == height_) return;
+
     width_  = w;
     height_ = h;
     markDirty();
+
+    relayout();
+    if (parent_ && !parent_->layingOut_)
+        parent_->relayout();
+}
+
+void Widget::setAnchors(int flags)
+{
+    int pw = parent_ ? parent_->width_ : 0;
+    int ph = parent_ ? parent_->height_ : 0;
+
+    anchorL_ = x_;
+    anchorT_ = y_;
+    anchorR_ = pw - x_ - width_;
+    anchorB_ = ph - y_ - height_;
+    anchorFlags_ = (uint8_t)flags;
+
+    if (parent_)
+        parent_->relayout();
+}
+
+void Widget::setAnchors(int flags, int left, int top, int right, int bottom)
+{
+    anchorFlags_ = (uint8_t)flags;
+    anchorL_ = left;
+    anchorT_ = top;
+    anchorR_ = right;
+    anchorB_ = bottom;
+
+    if (parent_)
+        parent_->relayout();
+}
+
+void Widget::setAnchorMargins(int left, int top, int right, int bottom)
+{
+    anchorL_ = left;
+    anchorT_ = top;
+    anchorR_ = right;
+    anchorB_ = bottom;
+
+    if (parent_)
+        parent_->relayout();
+}
+
+void Widget::setStretch(float weight)
+{
+    if (weight < 0.0f) weight = 0.0f;
+    if (layoutStretch_ == weight) return;
+    layoutStretch_ = weight;
+    if (parent_ && !parent_->layingOut_)
+        parent_->relayout();
+}
+
+void Widget::setFillCross(bool on)
+{
+    if (fillCross_ == on) return;
+    fillCross_ = on;
+    if (parent_ && !parent_->layingOut_)
+        parent_->relayout();
+}
+
+void Widget::setBoundsInternal(int x, int y, int w, int h)
+{
+    if (w < 0) w = 0;
+    if (h < 0) h = 0;
+
+    bool sizeChanged = (w != width_ || h != height_);
+    x_ = x;
+    y_ = y;
+    width_ = w;
+    height_ = h;
+    markDirty();
+
+    if (sizeChanged)
+        relayout();
+}
+
+void Widget::relayout()
+{
+    if (layingOut_) return;
+    layingOut_ = true;
+    layoutChildren();
+    layingOut_ = false;
+}
+
+void Widget::layoutChildren()
+{
+    for (auto& child : children_)
+    {
+        if (!child->anchorFlags_) continue;
+
+        int x = child->x_;
+        int y = child->y_;
+        int w = child->width_;
+        int h = child->height_;
+        int pw = width_;
+        int ph = height_;
+
+        int hFlags = child->anchorFlags_ & (AnchorLeft | AnchorRight);
+        if (hFlags == (AnchorLeft | AnchorRight))
+        {
+            x = child->anchorL_;
+            w = pw - child->anchorL_ - child->anchorR_;
+        }
+        else if (hFlags == AnchorLeft)
+        {
+            x = child->anchorL_;
+        }
+        else if (hFlags == AnchorRight)
+        {
+            x = pw - w - child->anchorR_;
+        }
+
+        int vFlags = child->anchorFlags_ & (AnchorTop | AnchorBottom);
+        if (vFlags == (AnchorTop | AnchorBottom))
+        {
+            y = child->anchorT_;
+            h = ph - child->anchorT_ - child->anchorB_;
+        }
+        else if (vFlags == AnchorTop)
+        {
+            y = child->anchorT_;
+        }
+        else if (vFlags == AnchorBottom)
+        {
+            y = ph - h - child->anchorB_;
+        }
+
+        child->setBoundsInternal(x, y, w, h);
+    }
 }
 
 int Widget::absoluteX() const
@@ -1470,7 +1891,10 @@ void Widget::addChild(std::unique_ptr<Widget> child)
     if (!child) return;
     child->parent_ = this;
     child->setWindowRecursive(window_);
+    Widget* raw = child.get();
     children_.push_back(std::move(child));
+    raw->relayout();
+    relayout();
     markDirty();
 }
 
@@ -1481,6 +1905,7 @@ void Widget::removeChild(Widget* child)
     if (it != children_.end())
     {
         children_.erase(it);
+        relayout();
         markDirty();
     }
 }
@@ -1494,8 +1919,11 @@ void Widget::setWindowRecursive(Window* w)
 
 void Widget::setVisible(bool v)
 {
+    if (visible_ == v) return;
     visible_ = v;
     markDirty();
+    if (parent_ && !parent_->layingOut_)
+        parent_->relayout();
 }
 
 void Widget::setEnabled(bool e)
@@ -1878,6 +2306,269 @@ bool MenuBar::hitTest(int absX, int absY) const
                absY >= dr.y && absY < dr.y + dr.h;
     }
     return true;
+}
+
+//==============================================================================
+// Box
+//==============================================================================
+Box::Box(Widget* parent, Orientation orientation)
+    : Widget(parent), orientation_(orientation)
+{
+}
+
+void Box::setOrientation(Orientation o)
+{
+    if (orientation_ == o) return;
+    orientation_ = o;
+    relayout();
+}
+
+void Box::setPadding(int padding)
+{
+    if (padding < 0) padding = 0;
+    if (padding_ == padding) return;
+    padding_ = padding;
+    relayout();
+}
+
+void Box::setSpacing(int spacing)
+{
+    if (spacing < 0) spacing = 0;
+    if (spacing_ == spacing) return;
+    spacing_ = spacing;
+    relayout();
+}
+
+void Box::layoutChildren()
+{
+    std::vector<Widget*> items;
+    for (auto& child : children_)
+        if (child->visible())
+            items.push_back(child.get());
+
+    int n = (int)items.size();
+    if (n == 0) return;
+
+    bool horiz = (orientation_ == Orientation::Horizontal);
+    int contentW = std::max(0, width_ - padding_ * 2);
+    int contentH = std::max(0, height_ - padding_ * 2);
+    int mainSize = horiz ? contentW : contentH;
+    int crossSize = horiz ? contentH : contentW;
+
+    float totalStretch = 0.0f;
+    int fixed = 0;
+    int lastWeighted = -1;
+
+    for (int i = 0; i < n; ++i)
+    {
+        Widget* c = items[i];
+        if (c->layoutStretch_ > 0.0f)
+        {
+            totalStretch += c->layoutStretch_;
+            lastWeighted = i;
+        }
+        else
+        {
+            fixed += horiz ? c->width_ : c->height_;
+        }
+    }
+
+    int gaps = spacing_ * (n - 1);
+    int remaining = std::max(0, mainSize - fixed - gaps);
+
+    std::vector<int> sizes(n, 0);
+    int used = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        Widget* c = items[i];
+        if (c->layoutStretch_ > 0.0f && totalStretch > 0.0f)
+        {
+            if (i == lastWeighted)
+            {
+                sizes[i] = std::max(0, remaining - used);
+            }
+            else
+            {
+                sizes[i] = (int)(remaining * (c->layoutStretch_ / totalStretch));
+                used += sizes[i];
+            }
+        }
+        else
+        {
+            sizes[i] = horiz ? c->width_ : c->height_;
+        }
+    }
+
+    int mainPos = padding_;
+    for (int i = 0; i < n; ++i)
+    {
+        Widget* c = items[i];
+        int childCross = c->fillCross_ ? crossSize
+                                       : (horiz ? c->height_ : c->width_);
+
+        if (horiz)
+            c->setBoundsInternal(mainPos, padding_, sizes[i], childCross);
+        else
+            c->setBoundsInternal(padding_, mainPos, childCross, sizes[i]);
+
+        mainPos += sizes[i] + spacing_;
+    }
+}
+
+//==============================================================================
+// SplitView
+//==============================================================================
+SplitView::SplitView(Widget* parent)
+    : Widget(parent)
+{
+    onMouseDown = [this](MouseEvent& e)
+    {
+        if (e.button != SDL_BUTTON_LEFT) return;
+
+        int p = (orientation_ == Orientation::SideBySide) ? e.x : e.y;
+        int d = dividerPos();
+        if (p < d) p = d - p; else p = p - d;
+        if (p <= dividerW_ / 2 + 2)
+            dragging_ = true;
+    };
+
+    onMouseMove = [this](MouseEvent& e)
+    {
+        if (!dragging_) return;
+        splitFromMouse(e.x, e.y);
+    };
+
+    onMouseUp = [this](MouseEvent&)
+    {
+        dragging_ = false;
+    };
+}
+
+void SplitView::setOrientation(Orientation o)
+{
+    if (orientation_ == o) return;
+    orientation_ = o;
+    relayout();
+}
+
+void SplitView::setSplit(float ratio)
+{
+    if (ratio < 0.0f) ratio = 0.0f;
+    if (ratio > 1.0f) ratio = 1.0f;
+    if (ratio_ == ratio) return;
+    ratio_ = ratio;
+    relayout();
+}
+
+void SplitView::setMinPaneSize(int px)
+{
+    if (px < 0) px = 0;
+    if (minPane_ == px) return;
+    minPane_ = px;
+    relayout();
+}
+
+void SplitView::setDividerWidth(int px)
+{
+    if (px < 0) px = 0;
+    if (dividerW_ == px) return;
+    dividerW_ = px;
+    relayout();
+}
+
+void SplitView::setDividerColor(Color color)
+{
+    dividerColor_ = color;
+    markDirty();
+}
+
+int SplitView::dividerPos() const
+{
+    for (auto& child : children_)
+    {
+        if (!child->visible()) continue;
+        return (orientation_ == Orientation::SideBySide) ? child->width()
+                                                         : child->height();
+    }
+    return 0;
+}
+
+void SplitView::splitFromMouse(int localX, int localY)
+{
+    int main = (orientation_ == Orientation::SideBySide) ? width_ : height_;
+    int avail = std::max(1, main - dividerW_);
+    int p = (orientation_ == Orientation::SideBySide) ? localX : localY;
+    p = std::max(0, std::min(p, avail));
+    setSplit((float)p / (float)avail);
+}
+
+void SplitView::layoutChildren()
+{
+    std::vector<Widget*> panes;
+    for (auto& child : children_)
+    {
+        if (!child->visible()) continue;
+        panes.push_back(child.get());
+        if (panes.size() == 2) break;
+    }
+
+    if (panes.empty()) return;
+
+    bool side = (orientation_ == Orientation::SideBySide);
+    int main = side ? width_ : height_;
+    int cross = side ? height_ : width_;
+
+    if (panes.size() == 1)
+    {
+        panes[0]->setBoundsInternal(0, 0, side ? main : cross, side ? cross : main);
+        return;
+    }
+
+    int avail = std::max(0, main - dividerW_);
+    int first = (int)(avail * ratio_ + 0.5f);
+
+    if (minPane_ > 0 && avail >= minPane_ * 2)
+        first = std::max(minPane_, std::min(first, avail - minPane_));
+    else
+        first = std::max(0, std::min(first, avail));
+
+    int second = avail - first;
+
+    if (side)
+    {
+        panes[0]->setBoundsInternal(0, 0, first, cross);
+        panes[1]->setBoundsInternal(first + dividerW_, 0, second, cross);
+    }
+    else
+    {
+        panes[0]->setBoundsInternal(0, 0, cross, first);
+        panes[1]->setBoundsInternal(0, first + dividerW_, cross, second);
+    }
+}
+
+void SplitView::onRender(SDL_Renderer* renderer)
+{
+    Widget::onRender(renderer);
+    if (!visible_) return;
+
+    int visiblePanes = 0;
+    for (auto& child : children_)
+        if (child->visible()) ++visiblePanes;
+    if (visiblePanes < 2) return;
+
+    Rect r = absoluteRect();
+    detail::ClipGuard clip(renderer, r.x, r.y, r.w, r.h);
+
+    int d = dividerPos();
+    SDL_FRect dr;
+    if (orientation_ == Orientation::SideBySide)
+        dr = { (float)(r.x + d), (float)r.y, (float)dividerW_, (float)r.h };
+    else
+        dr = { (float)r.x, (float)(r.y + d), (float)r.w, (float)dividerW_ };
+
+    SDL_SetRenderDrawColor(renderer,
+        dividerColor_.r, dividerColor_.g, dividerColor_.b, dividerColor_.a);
+    SDL_RenderFillRect(renderer, &dr);
 }
 
 //==============================================================================
@@ -3286,29 +3977,61 @@ TextArea::TextArea(Widget* parent)
         baseDown(e);
         if (draggingScrollbar()) return;
 
-        auto lines = splitLines();
-        if (lines.empty()) return;
+        int line = 0, col = 0;
+        lineColAt(e.x, e.y, line, col);
 
-        int line = (e.y + scrollY_) / 16;
-        if (line < 0) line = 0;
-        if (line >= (int)lines.size()) line = (int)lines.size() - 1;
-
-        const std::string& ln = lines[line];
-        int targetX = e.x + scrollX_ - 4;
-        int col = 0;
-        while (col < (int)ln.size())
+        bool shift = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
+        if (shift)
         {
-            int next = col + detail::utf8CharLen(ln.c_str() + col);
-            if (detail::textWidth(ln.substr(0, next).c_str()) > targetX)
-                break;
-            col = next;
+            if (selAnchorLine_ < 0)
+            {
+                selAnchorLine_ = cursorLine_;
+                selAnchorCol_  = cursorCol_;
+            }
         }
+        else
+        {
+            selAnchorLine_ = line;
+            selAnchorCol_  = col;
+        }
+
+        cursorLine_ = line;
+        cursorCol_  = col;
+        mouseSelecting_ = true;
+        cursorVisible_ = true;
+        cursorTick_ = SDL_GetTicks();
+        ensureCursorVisible();
+        markDirty();
+    };
+
+    auto baseMove = onMouseMove;
+    onMouseMove = [this, baseMove](MouseEvent& e)
+    {
+        baseMove(e);
+        if (draggingScrollbar() || !mouseSelecting_) return;
+
+        //auto-scroll while dragging outside the viewport
+        if (e.y < 0) setScrollOffset(scrollX_, scrollY_ - 16);
+        else if (e.y >= height_) setScrollOffset(scrollX_, scrollY_ + 16);
+        if (e.x < 0) setScrollOffset(scrollX_ - 16, scrollY_);
+        else if (e.x >= width_) setScrollOffset(scrollX_ + 16, scrollY_);
+
+        int line = 0, col = 0;
+        lineColAt(e.x, e.y, line, col);
 
         cursorLine_ = line;
         cursorCol_  = col;
         cursorVisible_ = true;
         cursorTick_ = SDL_GetTicks();
+        ensureCursorVisible();
         markDirty();
+    };
+
+    auto baseUp = onMouseUp;
+    onMouseUp = [this, baseUp](MouseEvent& e)
+    {
+        baseUp(e);
+        mouseSelecting_ = false;
     };
 
     onFocus = [this]()
@@ -3320,6 +4043,7 @@ TextArea::TextArea(Widget* parent)
     onBlur = [this]()
     {
         cursorVisible_ = false;
+        mouseSelecting_ = false;
         markDirty();
     };
 }
@@ -3329,6 +4053,9 @@ void TextArea::setText(const std::string& text)
     text_ = text;
     cursorLine_ = 0;
     cursorCol_  = 0;
+    selAnchorLine_ = -1;
+    selAnchorCol_  = -1;
+    mouseSelecting_ = false;
     cursorVisible_ = false;
     clampCursor();
     refreshLayout();
@@ -3336,6 +4063,93 @@ void TextArea::setText(const std::string& text)
 
 void TextArea::setTextColor(Color color) { textColor_ = color; markDirty(); }
 void TextArea::setReadOnly(bool ro) { readOnly_ = ro; markDirty(); }
+void TextArea::setSelectionColor(Color color) { selColor_ = color; markDirty(); }
+
+bool TextArea::hasSelection() const
+{
+    return selAnchorLine_ >= 0 &&
+           (selAnchorLine_ != cursorLine_ || selAnchorCol_ != cursorCol_);
+}
+
+void TextArea::selectionBounds(int& sl, int& sc, int& el, int& ec) const
+{
+    if (selAnchorLine_ < 0)
+    {
+        sl = el = cursorLine_;
+        sc = ec = cursorCol_;
+        return;
+    }
+
+    int al = selAnchorLine_, ac = selAnchorCol_;
+    if (al < cursorLine_ || (al == cursorLine_ && ac <= cursorCol_))
+    {
+        sl = al; sc = ac;
+        el = cursorLine_; ec = cursorCol_;
+    }
+    else
+    {
+        sl = cursorLine_; sc = cursorCol_;
+        el = al; ec = ac;
+    }
+}
+
+std::string TextArea::selectedText() const
+{
+    if (!hasSelection()) return {};
+
+    int sl, sc, el, ec;
+    selectionBounds(sl, sc, el, ec);
+
+    std::size_t a = offsetAt(sl, sc);
+    std::size_t b = offsetAt(el, ec);
+    if (b <= a) return {};
+    return text_.substr(a, b - a);
+}
+
+void TextArea::selectAll()
+{
+    auto lines = splitLines();
+    selAnchorLine_ = 0;
+    selAnchorCol_  = 0;
+    cursorLine_ = (int)lines.size() - 1;
+    cursorCol_  = (int)lines[cursorLine_].size();
+    cursorVisible_ = true;
+    cursorTick_ = SDL_GetTicks();
+    ensureCursorVisible();
+    markDirty();
+}
+
+void TextArea::clearSelection()
+{
+    if (selAnchorLine_ >= 0)
+    {
+        selAnchorLine_ = -1;
+        selAnchorCol_  = -1;
+        markDirty();
+    }
+}
+
+bool TextArea::deleteSelection()
+{
+    if (!hasSelection() || readOnly_) return false;
+
+    int sl, sc, el, ec;
+    selectionBounds(sl, sc, el, ec);
+
+    std::size_t a = offsetAt(sl, sc);
+    std::size_t b = offsetAt(el, ec);
+    if (b > a)
+        text_.erase(a, b - a);
+
+    cursorLine_ = sl;
+    cursorCol_  = sc;
+    selAnchorLine_ = -1;
+    selAnchorCol_  = -1;
+    mouseSelecting_ = false;
+    cursorTick_ = SDL_GetTicks();
+    refreshLayout();
+    return true;
+}
 
 std::vector<std::string> TextArea::splitLines() const
 {
@@ -3389,6 +4203,32 @@ std::size_t TextArea::offsetAt(int line, int col) const
     return text_.size();
 }
 
+void TextArea::lineColAt(int localX, int localY, int& line, int& col) const
+{
+    auto lines = splitLines();
+    if (lines.empty())
+    {
+        line = 0;
+        col = 0;
+        return;
+    }
+
+    line = (localY + scrollY_) / 16;
+    if (line < 0) line = 0;
+    if (line >= (int)lines.size()) line = (int)lines.size() - 1;
+
+    const std::string& ln = lines[line];
+    int targetX = localX + scrollX_ - 4;
+    col = 0;
+    while (col < (int)ln.size())
+    {
+        int next = col + detail::utf8CharLen(ln.c_str() + col);
+        if (detail::textWidthTo(ln.c_str(), next) > targetX)
+            break;
+        col = next;
+    }
+}
+
 void TextArea::refreshLayout()
 {
     auto lines = splitLines();
@@ -3427,6 +4267,8 @@ void TextArea::setCursor(int line, int col)
 {
     cursorLine_ = line;
     cursorCol_  = col;
+    selAnchorLine_ = -1;
+    selAnchorCol_  = -1;
     clampCursor();
     cursorVisible_ = true;
     cursorTick_ = SDL_GetTicks();
@@ -3437,6 +4279,9 @@ void TextArea::setCursor(int line, int col)
 void TextArea::insertText(const std::string& text)
 {
     if (readOnly_ || text.empty()) return;
+
+    if (hasSelection())
+        deleteSelection();
 
     clampCursor();
     std::size_t off = offsetAt(cursorLine_, cursorCol_);
@@ -3456,6 +4301,8 @@ void TextArea::insertText(const std::string& text)
         cursorCol_ = (int)(text.size() - lastNl - 1);
     }
 
+    selAnchorLine_ = -1;
+    selAnchorCol_  = -1;
     cursorVisible_ = true;
     cursorTick_ = SDL_GetTicks();
     refreshLayout();
@@ -3464,6 +4311,7 @@ void TextArea::insertText(const std::string& text)
 void TextArea::backspace()
 {
     if (readOnly_) return;
+    if (deleteSelection()) return;
 
     clampCursor();
     if (cursorCol_ > 0)
@@ -3493,6 +4341,7 @@ void TextArea::backspace()
 void TextArea::deleteForward()
 {
     if (readOnly_) return;
+    if (deleteSelection()) return;
 
     clampCursor();
     auto lines = splitLines();
@@ -3513,8 +4362,14 @@ void TextArea::deleteForward()
     refreshLayout();
 }
 
-void TextArea::moveCursorLeft()
+void TextArea::moveCursorLeft(bool select)
 {
+    if (select)
+    {
+        if (selAnchorLine_ < 0) { selAnchorLine_ = cursorLine_; selAnchorCol_ = cursorCol_; }
+    }
+    else { selAnchorLine_ = -1; selAnchorCol_ = -1; }
+
     clampCursor();
     auto lines = splitLines();
     if (cursorCol_ > 0)
@@ -3532,8 +4387,14 @@ void TextArea::moveCursorLeft()
     markDirty();
 }
 
-void TextArea::moveCursorRight()
+void TextArea::moveCursorRight(bool select)
 {
+    if (select)
+    {
+        if (selAnchorLine_ < 0) { selAnchorLine_ = cursorLine_; selAnchorCol_ = cursorCol_; }
+    }
+    else { selAnchorLine_ = -1; selAnchorCol_ = -1; }
+
     clampCursor();
     auto lines = splitLines();
     if (cursorCol_ < (int)lines[cursorLine_].size())
@@ -3552,8 +4413,14 @@ void TextArea::moveCursorRight()
     markDirty();
 }
 
-void TextArea::moveCursorUp()
+void TextArea::moveCursorUp(bool select)
 {
+    if (select)
+    {
+        if (selAnchorLine_ < 0) { selAnchorLine_ = cursorLine_; selAnchorCol_ = cursorCol_; }
+    }
+    else { selAnchorLine_ = -1; selAnchorCol_ = -1; }
+
     clampCursor();
     if (cursorLine_ <= 0) return;
 
@@ -3571,8 +4438,14 @@ void TextArea::moveCursorUp()
     markDirty();
 }
 
-void TextArea::moveCursorDown()
+void TextArea::moveCursorDown(bool select)
 {
+    if (select)
+    {
+        if (selAnchorLine_ < 0) { selAnchorLine_ = cursorLine_; selAnchorCol_ = cursorCol_; }
+    }
+    else { selAnchorLine_ = -1; selAnchorCol_ = -1; }
+
     clampCursor();
     auto lines = splitLines();
     if (cursorLine_ + 1 >= (int)lines.size()) return;
@@ -3590,8 +4463,14 @@ void TextArea::moveCursorDown()
     markDirty();
 }
 
-void TextArea::moveCursorHome()
+void TextArea::moveCursorHome(bool select)
 {
+    if (select)
+    {
+        if (selAnchorLine_ < 0) { selAnchorLine_ = cursorLine_; selAnchorCol_ = cursorCol_; }
+    }
+    else { selAnchorLine_ = -1; selAnchorCol_ = -1; }
+
     clampCursor();
     cursorCol_ = 0;
     cursorTick_ = SDL_GetTicks();
@@ -3599,8 +4478,14 @@ void TextArea::moveCursorHome()
     markDirty();
 }
 
-void TextArea::moveCursorEnd()
+void TextArea::moveCursorEnd(bool select)
 {
+    if (select)
+    {
+        if (selAnchorLine_ < 0) { selAnchorLine_ = cursorLine_; selAnchorCol_ = cursorCol_; }
+    }
+    else { selAnchorLine_ = -1; selAnchorCol_ = -1; }
+
     clampCursor();
     cursorCol_ = (int)splitLines()[cursorLine_].size();
     cursorTick_ = SDL_GetTicks();
@@ -3624,10 +4509,32 @@ void TextArea::onRender(SDL_Renderer* renderer)
     auto lines = splitLines();
     int maxW = 0;
 
+    bool sel = hasSelection();
+    int selSL = 0, selSC = 0, selEL = 0, selEC = 0;
+    if (sel)
+        selectionBounds(selSL, selSC, selEL, selEC);
+
     for (int i = 0; i < (int)lines.size(); i++)
     {
         int ly = r.y + i * 16 - scrollY_;
         if (ly + 16 < r.y || ly > r.y + r.h) continue;  //skip offscreen
+
+        if (sel && i >= selSL && i <= selEL)
+        {
+            const std::string& ln = lines[i];
+            int c0 = (i == selSL) ? selSC : 0;
+            int c1 = (i == selEL) ? selEC : (int)ln.size();
+            if (c1 < c0) c1 = c0;
+
+            int x0 = r.x + 4 + detail::textWidthTo(ln.c_str(), c0);
+            int x1 = r.x + 4 + detail::textWidthTo(ln.c_str(), c1);
+            if (x1 == x0) x1 = x0 + 4; //empty line / newline marker
+
+            SDL_FRect selr = { (float)x0, (float)ly, (float)(x1 - x0), 16.0f };
+            SDL_SetRenderDrawColor(renderer,
+                selColor_.r, selColor_.g, selColor_.b, selColor_.a);
+            SDL_RenderFillRect(renderer, &selr);
+        }
 
         detail::drawText(renderer, lines[i].c_str(), r.x + 4, ly, textColor_);
 
@@ -5078,99 +5985,107 @@ void Application::handleKeyEvent(const SDL_Event& ev)
         auto* tb = dynamic_cast<TextBox*>(focus);
         if (tb)
         {
-            SDL_Keycode k = ev.key.key;
-            bool ctrl  = (ev.key.mod & SDL_KMOD_CTRL) != 0;
-            bool shift = (ev.key.mod & SDL_KMOD_SHIFT) != 0;
+            TextEditAction action = tb->keyMap().find(ev.key.key, ev.key.mod);
 
-            if (ctrl)
+            if (action == TextEditAction::SelectAll)
             {
-                if (k == SDLK_A)
+                tb->selectAll();
+            }
+            else if (action == TextEditAction::Copy)
+            {
+                if (tb->hasSelection())
+                    SDL_SetClipboardText(tb->selectedText().c_str());
+            }
+            else if (action == TextEditAction::Cut)
+            {
+                if (tb->hasSelection())
                 {
-                    tb->selectAll();
-                }
-                else if (k == SDLK_C)
-                {
-                    if (tb->hasSelection())
-                        SDL_SetClipboardText(tb->selectedText().c_str());
-                }
-                else if (k == SDLK_X)
-                {
-                    if (tb->hasSelection())
-                    {
-                        SDL_SetClipboardText(tb->selectedText().c_str());
-                        tb->deleteSelection();
-                    }
-                }
-                else if (k == SDLK_V)
-                {
-                    char* clip = SDL_GetClipboardText();
-                    if (clip)
-                    {
-                        std::string ins = clip;
-                        SDL_free(clip);
-                        tb->insertText(ins);
-                    }
+                    SDL_SetClipboardText(tb->selectedText().c_str());
+                    tb->deleteSelection();
                 }
             }
-            else
+            else if (action == TextEditAction::Paste)
             {
-                switch (k)
+                char* clip = SDL_GetClipboardText();
+                if (clip)
                 {
-                case SDLK_BACKSPACE:
-                    if (!tb->deleteSelection() && tb->cursorPos_ > 0)
-                    {
-                        int start = detail::utf8Prev(tb->text_, tb->cursorPos_);
-                        tb->text_.erase(start, tb->cursorPos_ - start);
-                        tb->cursorPos_ = start;
-                        tb->adjustScroll();
-                        tb->markDirty();
-                    }
-                    break;
-
-                case SDLK_DELETE:
-                    if (!tb->deleteSelection() && tb->cursorPos_ < (int)tb->text_.size())
-                    {
-                        int clen = detail::utf8CharLen(tb->text_.c_str() + tb->cursorPos_);
-                        tb->text_.erase(tb->cursorPos_, clen);
-                        tb->adjustScroll();
-                        tb->markDirty();
-                    }
-                    break;
-
-                case SDLK_LEFT:
-                case SDLK_RIGHT:
-                case SDLK_HOME:
-                case SDLK_END:
-                    if (shift)
-                    {
-                        if (tb->selAnchor_ < 0)
-                            tb->selAnchor_ = tb->cursorPos_;
-                    }
-                    else
-                    {
-                        tb->selAnchor_ = -1;
-                    }
-
-                    if (k == SDLK_LEFT && tb->cursorPos_ > 0)
-                        tb->cursorPos_ = detail::utf8Prev(tb->text_, tb->cursorPos_);
-                    else if (k == SDLK_RIGHT && tb->cursorPos_ < (int)tb->text_.size())
-                        tb->cursorPos_ += detail::utf8CharLen(tb->text_.c_str() + tb->cursorPos_);
-                    else if (k == SDLK_HOME)
-                        tb->cursorPos_ = 0;
-                    else if (k == SDLK_END)
-                        tb->cursorPos_ = (int)tb->text_.size();
-
+                    std::string ins = clip;
+                    SDL_free(clip);
+                    tb->insertText(ins);
+                }
+            }
+            else if (action == TextEditAction::Backspace)
+            {
+                if (!tb->deleteSelection() && tb->cursorPos_ > 0)
+                {
+                    int start = detail::utf8Prev(tb->text_, tb->cursorPos_);
+                    tb->text_.erase(start, tb->cursorPos_ - start);
+                    tb->cursorPos_ = start;
                     tb->adjustScroll();
                     tb->markDirty();
-                    break;
-
-                case SDLK_ESCAPE:
-                    tb->clearSelection();
-                    break;
-
-                default:
-                    break;
                 }
+            }
+            else if (action == TextEditAction::DeleteForward)
+            {
+                if (!tb->deleteSelection() && tb->cursorPos_ < (int)tb->text_.size())
+                {
+                    int clen = detail::utf8CharLen(tb->text_.c_str() + tb->cursorPos_);
+                    tb->text_.erase(tb->cursorPos_, clen);
+                    tb->adjustScroll();
+                    tb->markDirty();
+                }
+            }
+            else if (action == TextEditAction::ClearSelection)
+            {
+                tb->clearSelection();
+            }
+            else if (action == TextEditAction::CursorLeft ||
+                     action == TextEditAction::CursorRight ||
+                     action == TextEditAction::CursorHome ||
+                     action == TextEditAction::CursorEnd ||
+                     action == TextEditAction::SelectLeft ||
+                     action == TextEditAction::SelectRight ||
+                     action == TextEditAction::SelectHome ||
+                     action == TextEditAction::SelectEnd)
+            {
+                bool select = action == TextEditAction::SelectLeft ||
+                              action == TextEditAction::SelectRight ||
+                              action == TextEditAction::SelectHome ||
+                              action == TextEditAction::SelectEnd;
+                if (select)
+                {
+                    if (tb->selAnchor_ < 0)
+                        tb->selAnchor_ = tb->cursorPos_;
+                }
+                else
+                {
+                    tb->selAnchor_ = -1;
+                }
+
+                if ((action == TextEditAction::CursorLeft ||
+                     action == TextEditAction::SelectLeft) && tb->cursorPos_ > 0)
+                {
+                    tb->cursorPos_ = detail::utf8Prev(tb->text_, tb->cursorPos_);
+                }
+                else if ((action == TextEditAction::CursorRight ||
+                          action == TextEditAction::SelectRight) &&
+                         tb->cursorPos_ < (int)tb->text_.size())
+                {
+                    tb->cursorPos_ += detail::utf8CharLen(tb->text_.c_str() + tb->cursorPos_);
+                }
+                else if (action == TextEditAction::CursorHome ||
+                         action == TextEditAction::SelectHome)
+                {
+                    tb->cursorPos_ = 0;
+                }
+                else if (action == TextEditAction::CursorEnd ||
+                         action == TextEditAction::SelectEnd)
+                {
+                    tb->cursorPos_ = (int)tb->text_.size();
+                }
+
+                tb->adjustScroll();
+                tb->markDirty();
             }
         }
 
@@ -5178,34 +6093,57 @@ void Application::handleKeyEvent(const SDL_Event& ev)
         auto* ta = dynamic_cast<TextArea*>(focus);
         if (ta)
         {
-            SDL_Keycode k = ev.key.key;
-            bool ctrl = (ev.key.mod & SDL_KMOD_CTRL) != 0;
+            TextEditAction action = ta->keyMap().find(ev.key.key, ev.key.mod);
 
-            if (!ctrl)
+            switch (action)
             {
-                switch (k)
+            case TextEditAction::CursorLeft:  ta->moveCursorLeft(false); break;
+            case TextEditAction::CursorRight: ta->moveCursorRight(false); break;
+            case TextEditAction::CursorUp:    ta->moveCursorUp(false); break;
+            case TextEditAction::CursorDown:  ta->moveCursorDown(false); break;
+            case TextEditAction::CursorHome:  ta->moveCursorHome(false); break;
+            case TextEditAction::CursorEnd:   ta->moveCursorEnd(false); break;
+
+            case TextEditAction::SelectLeft:  ta->moveCursorLeft(true); break;
+            case TextEditAction::SelectRight: ta->moveCursorRight(true); break;
+            case TextEditAction::SelectUp:    ta->moveCursorUp(true); break;
+            case TextEditAction::SelectDown:  ta->moveCursorDown(true); break;
+            case TextEditAction::SelectHome:  ta->moveCursorHome(true); break;
+            case TextEditAction::SelectEnd:   ta->moveCursorEnd(true); break;
+
+            case TextEditAction::SelectAll: ta->selectAll(); break;
+            case TextEditAction::ClearSelection: ta->clearSelection(); break;
+
+            case TextEditAction::Copy:
+                if (ta->hasSelection())
+                    SDL_SetClipboardText(ta->selectedText().c_str());
+                break;
+
+            case TextEditAction::Cut:
+                if (ta->hasSelection() && !ta->readOnly())
                 {
-                case SDLK_BACKSPACE: ta->backspace(); break;
-                case SDLK_DELETE:    ta->deleteForward(); break;
-                case SDLK_LEFT:      ta->moveCursorLeft(); break;
-                case SDLK_RIGHT:     ta->moveCursorRight(); break;
-                case SDLK_UP:        ta->moveCursorUp(); break;
-                case SDLK_DOWN:      ta->moveCursorDown(); break;
-                case SDLK_HOME:      ta->moveCursorHome(); break;
-                case SDLK_END:       ta->moveCursorEnd(); break;
-                case SDLK_RETURN:
-                case SDLK_KP_ENTER:  ta->insertText("\n"); break;
-                default: break;
+                    SDL_SetClipboardText(ta->selectedText().c_str());
+                    ta->deleteSelection();
                 }
-            }
-            else if (k == SDLK_V)
-            {
-                char* clip = SDL_GetClipboardText();
-                if (clip)
+                break;
+
+            case TextEditAction::Paste:
                 {
-                    ta->insertText(clip);
-                    SDL_free(clip);
+                    char* clip = SDL_GetClipboardText();
+                    if (clip)
+                    {
+                        ta->insertText(clip);
+                        SDL_free(clip);
+                    }
                 }
+                break;
+
+            case TextEditAction::Backspace:     ta->backspace(); break;
+            case TextEditAction::DeleteForward: ta->deleteForward(); break;
+            case TextEditAction::InsertNewline: ta->insertText("\n"); break;
+
+            default:
+                break;
             }
         }
 
