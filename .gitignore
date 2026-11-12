@@ -1,0 +1,5 @@
+.vscode/
+examples/
+AGENTS.md
+Makefile
+*.exe
