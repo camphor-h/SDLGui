@@ -20,7 +20,7 @@
 - Chainable position/size API: `pos()->sz()`
 - Opt-in layout: edge anchors, HBox/VBox linear layout, draggable SplitView
 - Custom title bar with minimize, maximize, close buttons
-- TextBox / TextArea / ComboBox editing with caret and clipboard support; TextBox also supports placeholder, password masking, and max length; TextBox/TextArea editing keys are rebindable
+- TextBox / TextArea / ComboBox editing with caret and clipboard support; TextBox also supports placeholder, password masking, and max length; TextBox/TextArea editing keys are rebindable; IME candidate window follows the caret
 - Render-on-demand: idle windows skip Clear / Draw / Present
 - Windowed applications with system or custom title bars via SDL3
 
@@ -1038,7 +1038,7 @@ cv->onDraw = [](SDL_Renderer* r, const sdlgui::Rect& a)
 - Legacy `setFontRenderer()` fonts are measured as 8px per character; use `setFont()` for real metrics
 - DropDown / ComboBox lists are drawn inside the widget, so a sibling added later and overlapping the open list can cover it
 - Redraw-on-demand is whole-window: no partial dirty rectangles
-- IME composition is handled by the OS; the library does not draw inline composition text
+- IME composition is handled by the OS; the library does not draw inline composition text, but reports the caret rect to `SDL_SetTextInputArea` so the candidate window follows the caret
 - No accessibility support
 - `SDLGUI_IMPLEMENTATION` must be defined in exactly one translation unit
 
@@ -1063,7 +1063,7 @@ BSD 2-Clause License. See [LICENSE](LICENSE).
 - `addChild<T>()` 模板 — 无需手动 `make_unique` + `move`
 - 可链式调用的位置/大小 API：`pos()->sz()`
 - 自定义标题栏（最小化、最大化、关闭按钮）
-- TextBox / TextArea / ComboBox 编辑：光标、剪贴板（TextBox 另支持占位符、密码掩码和最大长度；TextBox/TextArea 编辑键位可复写）
+- TextBox / TextArea / ComboBox 编辑：光标、剪贴板（TextBox 另支持占位符、密码掩码和最大长度；TextBox/TextArea 编辑键位可复写；输入法候选窗跟随光标）
 - 按需重绘：空闲窗口跳过 Clear / Draw / Present
 - 通过 SDL3 支持窗口（系统标题栏或自定义标题栏）
 
@@ -2082,7 +2082,7 @@ cv->onDraw = [](SDL_Renderer* r, const sdlgui::Rect& a)
 - 旧接口 `setFontRenderer()` 按每字符 8px 测量；需要真实 metrics 请用 `setFont()`
 - DropDown / ComboBox 的展开列表画在控件内部，后添加的重叠兄弟控件可能盖住它
 - 按需重绘是整窗级的，没有局部脏矩形
-- 输入法组合文本由系统绘制，库不绘制内联组合文本
+- 输入法组合文本由系统绘制，库不绘制内联组合文本；但会把光标矩形传给 `SDL_SetTextInputArea`，让候选窗跟随光标
 - 无无障碍支持
 - `SDLGUI_IMPLEMENTATION` 只能在一个编译单元中定义
 

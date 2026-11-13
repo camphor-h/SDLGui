@@ -315,6 +315,9 @@ public:
     //hit test
     virtual bool hitTest(int absX, int absY) const;
 
+    //IME caret rectangle in window coordinates (false for non-text widgets)
+    virtual bool textInputRect(Rect& rect) const { (void)rect; return false; }
+
     //scroll
     virtual void onMouseWheel(int delta);
 
@@ -627,6 +630,7 @@ public:
     bool hasFocus() const { return hasFocus_; }
     int  cursorPosition() const { return cursorPos_; }
     bool hasSelection() const { return selAnchor_ >= 0 && selAnchor_ != cursorPos_; }
+    bool textInputRect(Rect& rect) const override;
 
     void        selectAll();
     void        clearSelection();
@@ -929,6 +933,8 @@ public:
     void moveCursorHome();
     void moveCursorEnd();
 
+    bool textInputRect(Rect& rect) const override;
+
     bool isPopupOpen() const override { return expanded_; }
     void closePopup() override
     {
@@ -1012,6 +1018,7 @@ public:
     std::string selectedText() const;
     void        selectAll();
     void        clearSelection();
+    bool        textInputRect(Rect& rect) const override;
 
     TextKeyMap&       keyMap()       { return keyMap_; }
     const TextKeyMap& keyMap() const { return keyMap_; }
@@ -1200,6 +1207,7 @@ private:
     Window* findWindowByID(Uint32 id);
     Widget* hitTest(Widget* w, int absX, int absY);
     void    updateHovered(Widget* target);
+    void    updateTextInputArea(Widget* widget);
     void    widgetDestroyed(Widget* w);
     void    closePopups(Widget* w, int absX, int absY);
     void    processEvent(const SDL_Event& ev);
@@ -3523,6 +3531,16 @@ void TextBox::adjustScroll()
     if (scrollOffX_ < minScroll) scrollOffX_ = minScroll;
 }
 
+bool TextBox::textInputRect(Rect& rect) const
+{
+    Rect r = absoluteRect();
+    int lineH = currentFont()->lineHeight();
+    int cx = r.x + 4 + scrollOffX_ + displayWidthTo(cursorPos_);
+    int cy = r.y + (r.h - lineH) / 2;
+    rect = { cx, cy, 1, lineH };
+    return true;
+}
+
 void TextBox::onFontChanged()
 {
     adjustScroll();
@@ -4109,6 +4127,16 @@ void ComboBox::setSelectedIndex(int index)
         cursorPos_ = (int)text_.size();
         markDirty();
     }
+}
+
+bool ComboBox::textInputRect(Rect& rect) const
+{
+    Rect r = absoluteRect();
+    int lineH = currentFont()->lineHeight();
+    int cx = r.x + 4 + detail::textWidthTo(text_.c_str(), cursorPos_);
+    int cy = r.y + (r.h - lineH) / 2;
+    rect = { cx, cy, 1, lineH };
+    return true;
 }
 
 void ComboBox::setText(const std::string& text) { text_ = text; cursorPos_ = (int)text_.size(); markDirty(); }
@@ -4782,6 +4810,28 @@ void TextArea::moveCursorEnd(bool select)
     markDirty();
 }
 
+bool TextArea::textInputRect(Rect& rect) const
+{
+    auto lines = splitLines();
+    if (lines.empty()) return false;
+
+    int line = cursorLine_;
+    if (line < 0) line = 0;
+    if (line >= (int)lines.size()) line = (int)lines.size() - 1;
+
+    int col = cursorCol_;
+    if (col < 0) col = 0;
+    if (col > (int)lines[line].size()) col = (int)lines[line].size();
+
+    int lineH = std::max(1, currentFont()->lineHeight());
+    Rect r = absoluteRect();
+    int cx = r.x + 4 - scrollX_ +
+             detail::textWidthTo(lines[line].c_str(), col);
+    int cy = r.y + line * lineH - scrollY_;
+    rect = { cx, cy, 1, lineH };
+    return true;
+}
+
 void TextArea::onFontChanged()
 {
     refreshLayout();
@@ -4822,8 +4872,8 @@ void TextArea::onRender(SDL_Renderer* renderer)
             int c1 = (i == selEL) ? selEC : (int)ln.size();
             if (c1 < c0) c1 = c0;
 
-            int x0 = r.x + 4 + detail::textWidthTo(ln.c_str(), c0);
-            int x1 = r.x + 4 + detail::textWidthTo(ln.c_str(), c1);
+            int x0 = r.x + 4 - scrollX_ + detail::textWidthTo(ln.c_str(), c0);
+            int x1 = r.x + 4 - scrollX_ + detail::textWidthTo(ln.c_str(), c1);
             if (x1 == x0) x1 = x0 + 4; //empty line / newline marker
 
             SDL_FRect selr = { (float)x0, (float)ly, (float)(x1 - x0), (float)lineH };
@@ -4832,7 +4882,7 @@ void TextArea::onRender(SDL_Renderer* renderer)
             SDL_RenderFillRect(renderer, &selr);
         }
 
-        detail::drawText(renderer, lines[i].c_str(), r.x + 4, ly, textColor_);
+        detail::drawText(renderer, lines[i].c_str(), r.x + 4 - scrollX_, ly, textColor_);
 
         int lw = detail::textWidth(lines[i].c_str());
         if (lw > maxW) maxW = lw;
@@ -4848,7 +4898,7 @@ void TextArea::onRender(SDL_Renderer* renderer)
             if (col > (int)lines[cursorLine_].size())
                 col = (int)lines[cursorLine_].size();
 
-            int cx = r.x + 4 + detail::textWidthTo(lines[cursorLine_].c_str(), col);
+            int cx = r.x + 4 - scrollX_ + detail::textWidthTo(lines[cursorLine_].c_str(), col);
             int cy = r.y + cursorLine_ * lineH - scrollY_;
             if (cy + lineH >= r.y && cy <= r.y + r.h)
             {
@@ -5632,7 +5682,51 @@ void Application::refreshFont()
         win->root_->notifyFontChanged();
         win->root_->relayout();
         win->requestRedraw();
+        if (win->focused_)
+            updateTextInputArea(win->focused_);
     }
+}
+
+void Application::updateTextInputArea(Widget* widget)
+{
+    if (!widget) return;
+
+    if (!dynamic_cast<TextBox*>(widget) &&
+        !dynamic_cast<TextArea*>(widget) &&
+        !dynamic_cast<ComboBox*>(widget))
+        return;
+
+    Window* win = widget->getWindow();
+    if (!win || !win->handle()) return;
+
+    Rect caret;
+    if (!widget->textInputRect(caret)) return;
+
+    //Keep the IME anchor inside the focused widget.
+    Rect wr = widget->absoluteRect();
+    if (wr.w > 0 && caret.x < wr.x) caret.x = wr.x;
+    if (wr.w > 0 && caret.x > wr.x + wr.w - 1) caret.x = wr.x + wr.w - 1;
+    if (wr.h > 0 && caret.y < wr.y) caret.y = wr.y;
+    if (wr.h > 0 && caret.y > wr.y + wr.h - 1) caret.y = wr.y + wr.h - 1;
+
+    if (caret.w < 1) caret.w = 1;
+    if (caret.h < 1) caret.h = 1;
+
+    int ww = 0, wh = 0;
+    SDL_GetWindowSize(win->handle(), &ww, &wh);
+    if (ww > 0)
+    {
+        if (caret.x < 0) caret.x = 0;
+        if (caret.x >= ww) caret.x = ww - 1;
+    }
+    if (wh > 0)
+    {
+        if (caret.y < 0) caret.y = 0;
+        if (caret.y >= wh) caret.y = wh - 1;
+    }
+
+    SDL_Rect area = { caret.x, caret.y, caret.w, caret.h };
+    SDL_SetTextInputArea(win->handle(), &area, 0);
 }
 
 void Application::run()
@@ -5696,9 +5790,11 @@ void Application::processEvent(const SDL_Event& ev)
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
         case SDL_EVENT_MOUSE_BUTTON_UP:
             handleMouseEvent(ev);
+            updateTextInputArea(focused_);
             break;
         case SDL_EVENT_TEXT_EDITING:
             //Composition is drawn by the OS/IME; committed text arrives as TEXT_INPUT.
+            updateTextInputArea(focused_);
             break;
         case SDL_EVENT_TEXT_INPUT:
             {
@@ -5720,6 +5816,8 @@ void Application::processEvent(const SDL_Event& ev)
                     {
                         cb->insertText(ev.text.text);
                     }
+
+                    updateTextInputArea(target);
                 }
             }
             break;
@@ -5756,17 +5854,24 @@ void Application::processEvent(const SDL_Event& ev)
                     }
                     target = target->parent();
                 }
+
+                updateTextInputArea(focused_);
             }
             break;
         case SDL_EVENT_KEY_DOWN:
         case SDL_EVENT_KEY_UP:
             handleKeyEvent(ev);
+            updateTextInputArea(focused_);
             break;
         case SDL_EVENT_WINDOW_RESIZED:
             {
                 auto* win = findWindowByID(ev.window.windowID);
                 if (win)
+                {
                     win->onResized(ev.window.data1, ev.window.data2);
+                    if (win->focused_)
+                        updateTextInputArea(win->focused_);
+                }
             }
             break;
         case SDL_EVENT_WINDOW_EXPOSED:
@@ -5971,13 +6076,9 @@ void Application::setFocus(Widget* w, bool fromKeyboard)
             if (auto* win = focused_->getWindow())
             {
                 if (win->handle())
-                {
                     SDL_StartTextInput(win->handle());
-                    Rect wr = focused_->absoluteRect();
-                    SDL_Rect area = { wr.x, wr.y, wr.w, wr.h };
-                    SDL_SetTextInputArea(win->handle(), &area, 0);
-                }
             }
+            updateTextInputArea(focused_);
         }
     }
 }
