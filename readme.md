@@ -720,6 +720,8 @@ ta->setText("Line 1\nLine 2\nLine 3");
 | `setText(string)` | `void` | Set text content and reset the caret |
 | `setTextColor(Color)` | `void` | Set text color |
 | `setSelectionColor(Color)` | `void` | Set selection highlight color |
+| `setLineSpacing(int)` | `void` | Extra pixels between lines (0 = font default) |
+| `setLetterSpacing(int)` | `void` | Extra pixels between characters (0 = font default) |
 | `setReadOnly(bool)` | `void` | Toggle editing (selection/copy still work) |
 | `text()` | `const string&` | Get current text |
 | `hasSelection()` | `bool` | Whether a range is selected |
@@ -732,6 +734,15 @@ ta->setText("Line 1\nLine 2\nLine 3");
 | `moveCursorLeft/Right/Up/Down/Home/End(bool select = false)` | `void` | Move the caret; `true` extends the selection |
 
 **Keyboard controls:** Shift+arrows/Home/End extends selection; Ctrl+A selects all; Ctrl+C/Ctrl+X copy/cut; Ctrl+V pastes and replaces the selection; Enter inserts a newline. Mouse drag or Shift+click also selects.
+
+Line and letter spacing are TextArea-only adjustments:
+
+```cpp
+ta->setLineSpacing(4);   // +4px per line
+ta->setLetterSpacing(1); // +1px between characters
+```
+
+They affect rendering, caret/click mapping, selection, horizontal scrolling and IME caret positioning.
 
 Editable when focused; `readOnly(true)` blocks text changes but still allows selection and copying. The caret blinks while the TextArea has keyboard focus.
 
@@ -1800,6 +1811,8 @@ ta->setText("第一行\n第二行\n第三行");
 | `setText(string)` | `void` | 设置文本并重置光标 |
 | `setTextColor(Color)` | `void` | 设置文字颜色 |
 | `setSelectionColor(Color)` | `void` | 设置选择区背景色 |
+| `setLineSpacing(int)` | `void` | 行间额外像素（0 = 字体默认行高） |
+| `setLetterSpacing(int)` | `void` | 字符间额外像素（0 = 字体默认字距） |
 | `setReadOnly(bool)` | `void` | 切换只读模式（仍可选择/复制） |
 | `text()` | `const string&` | 获取当前文本 |
 | `hasSelection()` | `bool` | 是否有选中文本 |
@@ -1812,6 +1825,15 @@ ta->setText("第一行\n第二行\n第三行");
 | `moveCursorLeft/Right/Up/Down/Home/End(bool select = false)` | `void` | 移动光标；`true` 扩展选择区 |
 
 **键盘控制：** Shift+方向键/Home/End 扩展选择区；Ctrl+A 全选；Ctrl+C/Ctrl+X 复制/剪切；Ctrl+V 粘贴并替换选择区；Enter 插入换行。鼠标拖动或 Shift+点击也可选择。
+
+行距和字距是 TextArea 专用设置：
+
+```cpp
+ta->setLineSpacing(4);   // 每行额外 +4px
+ta->setLetterSpacing(1); // 字符间额外 +1px
+```
+
+它们会影响渲染、光标/点击定位、选择区、水平滚动和输入法光标位置。
 
 获得焦点时可编辑，`readOnly(true)` 阻止文本修改但仍可选择和复制；光标在获得键盘焦点时闪烁。
 

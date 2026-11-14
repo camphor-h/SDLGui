@@ -1211,6 +1211,10 @@ public:
     void     setBorderColor(Color color);
     void     setReadOnly(bool ro);
     void     setSelectionColor(Color color);
+    void     setLineSpacing(int px);   //extra pixels between lines
+    void     setLetterSpacing(int px); //extra pixels between characters
+    int      lineSpacing() const { return lineSpacing_; }
+    int      letterSpacing() const { return letterSpacing_; }
     const std::string& text()     const { return text_; }
     Color    textColor()          const { return textColor_; }
     bool     readOnly()           const { return readOnly_; }
@@ -1258,6 +1262,8 @@ private:
     Color       cursorColor_ = Color(200, 200, 200);
     Color       selColor_  = Color(50, 100, 180, 180);
     Color       borderColor_ = Color(70, 70, 75);
+    int         lineSpacing_ = 0;
+    int         letterSpacing_ = 0;
     bool        readOnly_  = false;
     int         cursorLine_ = 0, cursorCol_ = 0;
     int         selAnchorLine_ = -1, selAnchorCol_ = -1;
@@ -1274,6 +1280,12 @@ private:
     bool        deleteSelection();
     void        selectionBounds(int& sl, int& sc, int& el, int& ec) const;
     void        lineColAt(int localX, int localY, int& line, int& col) const;
+    int         lineHeight() const;
+    int         glyphAdvance(uint32_t codepoint) const;
+    int         prefixWidth(const std::string& line, int bytePos) const;
+    int         lineWidth(const std::string& line) const;
+    void        drawLine(SDL_Renderer* renderer, const std::string& line,
+                         int x, int y, Color color) const;
 };
 
 //==============================================================================
@@ -4650,7 +4662,7 @@ TextArea::TextArea(Widget* parent)
         if (draggingScrollbar() || !mouseSelecting_) return;
 
         //auto-scroll while dragging outside the viewport
-        int lineH = currentFont()->lineHeight();
+        int lineH = lineHeight();
         if (e.y < 0) setScrollOffset(scrollX_, scrollY_ - lineH);
         else if (e.y >= height_) setScrollOffset(scrollX_, scrollY_ + lineH);
         if (e.x < 0) setScrollOffset(scrollX_ - 16, scrollY_);
@@ -4707,6 +4719,16 @@ void TextArea::setCursorColor(Color color) { cursorColor_ = color; markDirty(); 
 void TextArea::setBorderColor(Color color) { borderColor_ = color; markDirty(); }
 void TextArea::setReadOnly(bool ro) { readOnly_ = ro; markDirty(); }
 void TextArea::setSelectionColor(Color color) { selColor_ = color; markDirty(); }
+void TextArea::setLineSpacing(int px)
+{
+    lineSpacing_ = px;
+    refreshLayout();
+}
+void TextArea::setLetterSpacing(int px)
+{
+    letterSpacing_ = px;
+    refreshLayout();
+}
 
 bool TextArea::hasSelection() const
 {
@@ -4856,20 +4878,94 @@ void TextArea::lineColAt(int localX, int localY, int& line, int& col) const
         return;
     }
 
-    int lineH = std::max(1, currentFont()->lineHeight());
+    int lineH = lineHeight();
     line = (localY + scrollY_) / lineH;
     if (line < 0) line = 0;
     if (line >= (int)lines.size()) line = (int)lines.size() - 1;
 
     const std::string& ln = lines[line];
     int targetX = localX + scrollX_ - 4;
+    int x = 0;
+    int chars = 0;
     col = 0;
     while (col < (int)ln.size())
     {
-        int next = col + detail::utf8CharLen(ln.c_str() + col);
-        if (detail::textWidthTo(ln.c_str(), next) > targetX)
+        const char* prev = ln.c_str() + col;
+        const char* p = prev;
+        uint32_t cp = detail::decodeUTF8(p);
+        int next = (int)(p - ln.c_str());
+        if (chars > 0)
+            x += letterSpacing_;
+        int cw = glyphAdvance(cp);
+        if (x + cw > targetX)
             break;
+        x += cw;
         col = next;
+        ++chars;
+    }
+}
+
+int TextArea::lineHeight() const
+{
+    return std::max(1, currentFont()->lineHeight() + lineSpacing_);
+}
+
+int TextArea::glyphAdvance(uint32_t codepoint) const
+{
+    return currentFont()->advance(codepoint);
+}
+
+int TextArea::prefixWidth(const std::string& line, int bytePos) const
+{
+    int w = 0;
+    int chars = 0;
+    int consumed = 0;
+    const char* p = line.c_str();
+
+    while (*p && consumed < bytePos)
+    {
+        const char* prev = p;
+        uint32_t cp = detail::decodeUTF8(p);
+        int bytes = (int)(p - prev);
+        if (consumed + bytes > bytePos) break;
+
+        if (chars > 0)
+            w += letterSpacing_;
+        w += glyphAdvance(cp);
+        consumed += bytes;
+        ++chars;
+    }
+
+    return std::max(0, w);
+}
+
+int TextArea::lineWidth(const std::string& line) const
+{
+    return prefixWidth(line, (int)line.size());
+}
+
+void TextArea::drawLine(SDL_Renderer* renderer, const std::string& line,
+                        int x, int y, Color color) const
+{
+    if (letterSpacing_ == 0)
+    {
+        detail::drawText(renderer, line.c_str(), x, y, color);
+        return;
+    }
+
+    const char* p = line.c_str();
+    int chars = 0;
+    while (*p)
+    {
+        const char* prev = p;
+        uint32_t cp = detail::decodeUTF8(p);
+        std::string glyph(prev, p);
+
+        if (chars > 0)
+            x += letterSpacing_;
+        detail::drawText(renderer, glyph.c_str(), x, y, color);
+        x += glyphAdvance(cp);
+        ++chars;
     }
 }
 
@@ -4878,9 +4974,9 @@ void TextArea::refreshLayout()
     auto lines = splitLines();
     int maxW = width_;
     for (auto& l : lines)
-        maxW = std::max(maxW, detail::textWidth(l.c_str()) + 8);
+        maxW = std::max(maxW, lineWidth(l) + 8);
 
-    int lineH = std::max(1, currentFont()->lineHeight());
+    int lineH = lineHeight();
     setContentSize(maxW, (int)lines.size() * lineH);
     clampCursor();
     ensureCursorVisible();
@@ -4894,7 +4990,7 @@ void TextArea::ensureCursorVisible()
     if (cursorLine_ < 0) cursorLine_ = 0;
     if (cursorLine_ >= (int)lines.size()) cursorLine_ = (int)lines.size() - 1;
 
-    int lineH  = std::max(1, currentFont()->lineHeight());
+    int lineH  = lineHeight();
     int top    = cursorLine_ * lineH;
     int bottom = top + lineH;
     if (top < scrollY_)
@@ -4902,7 +4998,7 @@ void TextArea::ensureCursorVisible()
     else if (bottom > scrollY_ + height_)
         setScrollOffset(scrollX_, bottom - height_);
 
-    int cx = 4 + detail::textWidthTo(lines[cursorLine_].c_str(), cursorCol_);
+    int cx = 4 + prefixWidth(lines[cursorLine_], cursorCol_);
     if (cx < scrollX_)
         setScrollOffset(cx - 4, scrollY_);
     else if (cx > scrollX_ + width_ - 8)
@@ -5152,10 +5248,9 @@ bool TextArea::textInputRect(Rect& rect) const
     if (col < 0) col = 0;
     if (col > (int)lines[line].size()) col = (int)lines[line].size();
 
-    int lineH = std::max(1, currentFont()->lineHeight());
+    int lineH = lineHeight();
     Rect r = absoluteRect();
-    int cx = r.x + 4 - scrollX_ +
-             detail::textWidthTo(lines[line].c_str(), col);
+    int cx = r.x + 4 - scrollX_ + prefixWidth(lines[line], col);
     int cy = r.y + line * lineH - scrollY_;
     rect = { cx, cy, 1, lineH };
     return true;
@@ -5187,7 +5282,7 @@ void TextArea::onRender(SDL_Renderer* renderer)
 
     auto lines = splitLines();
     int maxW = 0;
-    int lineH = std::max(1, currentFont()->lineHeight());
+    int lineH = lineHeight();
 
     bool sel = hasSelection();
     int selSL = 0, selSC = 0, selEL = 0, selEC = 0;
@@ -5206,8 +5301,8 @@ void TextArea::onRender(SDL_Renderer* renderer)
             int c1 = (i == selEL) ? selEC : (int)ln.size();
             if (c1 < c0) c1 = c0;
 
-            int x0 = r.x + 4 - scrollX_ + detail::textWidthTo(ln.c_str(), c0);
-            int x1 = r.x + 4 - scrollX_ + detail::textWidthTo(ln.c_str(), c1);
+            int x0 = r.x + 4 - scrollX_ + prefixWidth(ln, c0);
+            int x1 = r.x + 4 - scrollX_ + prefixWidth(ln, c1);
             if (x1 == x0) x1 = x0 + 4; //empty line / newline marker
 
             SDL_FRect selr = { (float)x0, (float)ly, (float)(x1 - x0), (float)lineH };
@@ -5216,9 +5311,9 @@ void TextArea::onRender(SDL_Renderer* renderer)
             SDL_RenderFillRect(renderer, &selr);
         }
 
-        detail::drawText(renderer, lines[i].c_str(), r.x + 4 - scrollX_, ly, textColor_);
+        drawLine(renderer, lines[i], r.x + 4 - scrollX_, ly, textColor_);
 
-        int lw = detail::textWidth(lines[i].c_str());
+        int lw = lineWidth(lines[i]);
         if (lw > maxW) maxW = lw;
     }
 
@@ -5232,7 +5327,7 @@ void TextArea::onRender(SDL_Renderer* renderer)
             if (col > (int)lines[cursorLine_].size())
                 col = (int)lines[cursorLine_].size();
 
-            int cx = r.x + 4 - scrollX_ + detail::textWidthTo(lines[cursorLine_].c_str(), col);
+            int cx = r.x + 4 - scrollX_ + prefixWidth(lines[cursorLine_], col);
             int cy = r.y + cursorLine_ * lineH - scrollY_;
             if (cy + lineH >= r.y && cy <= r.y + r.h)
             {
@@ -6607,6 +6702,7 @@ void Application::setFocus(Widget* w, bool fromKeyboard)
                     win->requestRedraw();
                 }
             }
+            updateTextInputArea(w);
         }
         return;
     }
