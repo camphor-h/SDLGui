@@ -722,6 +722,10 @@ ta->setText("Line 1\nLine 2\nLine 3");
 | `setSelectionColor(Color)` | `void` | Set selection highlight color |
 | `setLineSpacing(int)` | `void` | Extra pixels between lines (0 = font default) |
 | `setLetterSpacing(int)` | `void` | Extra pixels between characters (0 = font default) |
+| `setAutoIndent(bool)` | `void` | Enter copies the current line's indentation; adds a level after `{`, `[` or `(` |
+| `setSmartBackspace(bool)` | `void` | Backspace inside leading whitespace removes a whole soft-tab stop |
+| `setIndentWithSpaces(bool)` | `void` | Auto-indent uses spaces (`true`) or tabs (`false`) |
+| `setTabWidth(int)` | `void` | Tab width used by auto-indent and smart backspace (1-16) |
 | `setReadOnly(bool)` | `void` | Toggle editing (selection/copy still work) |
 | `text()` | `const string&` | Get current text |
 | `hasSelection()` | `bool` | Whether a range is selected |
@@ -730,10 +734,11 @@ ta->setText("Line 1\nLine 2\nLine 3");
 | `setCursor(line, column)` | `void` | Set caret position (byte column) |
 | `cursorLine()` / `cursorColumn()` | `int` | Get caret line / byte column |
 | `insertText(string)` | `void` | Insert text, replacing the selection |
+| `insertNewline()` | `void` | Insert a newline using the auto-indent rules |
 | `backspace()` / `deleteForward()` | `void` | Delete selection, or one character |
 | `moveCursorLeft/Right/Up/Down/Home/End(bool select = false)` | `void` | Move the caret; `true` extends the selection |
 
-**Keyboard controls:** Shift+arrows/Home/End extends selection; Ctrl+A selects all; Ctrl+C/Ctrl+X copy/cut; Ctrl+V pastes and replaces the selection; Enter inserts a newline. Mouse drag or Shift+click also selects.
+**Keyboard controls:** Shift+arrows/Home/End extends selection; Ctrl+A selects all; Ctrl+C/Ctrl+X copy/cut; Ctrl+V pastes and replaces the selection; Enter inserts a newline (with auto-indent when enabled). Mouse drag or Shift+click also selects.
 
 Line and letter spacing are TextArea-only adjustments:
 
@@ -1079,7 +1084,7 @@ cv->onDraw = [](SDL_Renderer* r, const sdlgui::Rect& a)
 
 - Multi-window focus/event routing is implemented, but multi-window apps are still not exhaustively tested
 - Text selection exists in TextBox and TextArea; ComboBox does not have a selection model yet
-- TextArea has no undo/redo, line-number gutter, syntax highlighting, tab indentation, or large-file buffer optimization yet; Tab still moves focus
+- TextArea has no undo/redo, syntax highlighting, or large-file buffer optimization yet; Tab still moves focus
 - No grid layout, docking, or CSS-style flex; anchors, HBox/VBox and SplitView are the supported layout primitives
 - No fullscreen API; windows are windowed only
 - The built-in font is a fixed 16px bitmap; runtime `Font` objects can change metrics/drawing, but widget sizes are explicit and there is no automatic HiDPI/kerning/ligature handling
@@ -1813,6 +1818,10 @@ ta->setText("第一行\n第二行\n第三行");
 | `setSelectionColor(Color)` | `void` | 设置选择区背景色 |
 | `setLineSpacing(int)` | `void` | 行间额外像素（0 = 字体默认行高） |
 | `setLetterSpacing(int)` | `void` | 字符间额外像素（0 = 字体默认字距） |
+| `setAutoIndent(bool)` | `void` | 换行时沿用当前行缩进；行尾为 `{`、`[`、`(` 时增加一级 |
+| `setSmartBackspace(bool)` | `void` | 在行首空白中按退格可一次删除一个软 Tab 宽度 |
+| `setIndentWithSpaces(bool)` | `void` | 自动缩进使用空格（`true`）或制表符（`false`） |
+| `setTabWidth(int)` | `void` | 自动缩进和智能退格使用的 Tab 宽度（1-16） |
 | `setReadOnly(bool)` | `void` | 切换只读模式（仍可选择/复制） |
 | `text()` | `const string&` | 获取当前文本 |
 | `hasSelection()` | `bool` | 是否有选中文本 |
@@ -1821,10 +1830,11 @@ ta->setText("第一行\n第二行\n第三行");
 | `setCursor(line, column)` | `void` | 设置光标（字节列） |
 | `cursorLine()` / `cursorColumn()` | `int` | 获取光标行/字节列 |
 | `insertText(string)` | `void` | 在光标处插入文本，替换选择区 |
+| `insertNewline()` | `void` | 按自动缩进规则插入换行 |
 | `backspace()` / `deleteForward()` | `void` | 删除选择区，或删除一个字符 |
 | `moveCursorLeft/Right/Up/Down/Home/End(bool select = false)` | `void` | 移动光标；`true` 扩展选择区 |
 
-**键盘控制：** Shift+方向键/Home/End 扩展选择区；Ctrl+A 全选；Ctrl+C/Ctrl+X 复制/剪切；Ctrl+V 粘贴并替换选择区；Enter 插入换行。鼠标拖动或 Shift+点击也可选择。
+**键盘控制：** Shift+方向键/Home/End 扩展选择区；Ctrl+A 全选；Ctrl+C/Ctrl+X 复制/剪切；Ctrl+V 粘贴并替换选择区；Enter 插入换行（启用自动缩进时沿用当前缩进）。鼠标拖动或 Shift+点击也可选择。
 
 行距和字距是 TextArea 专用设置：
 
@@ -2172,7 +2182,7 @@ cv->onDraw = [](SDL_Renderer* r, const sdlgui::Rect& a)
 
 - 多窗口的焦点/事件路由已实现，但多窗口场景仍未充分测试
 - TextBox 和 TextArea 已有选择区；ComboBox 还没有选择模型
-- TextArea 还没有撤销/重做、行号栏、语法高亮、Tab 缩进和大文件缓冲优化；Tab 仍用于切换焦点
+- TextArea 还没有撤销/重做、语法高亮和大文件缓冲优化；Tab 仍用于切换焦点
 - 无网格布局、停靠或 CSS 式 flex；布局原语为锚点、HBox/VBox 和 SplitView
 - 无全屏 API，只支持窗口模式
 - 内置字体是固定 16px 位图；运行时 `Font` 可以改变 metrics/绘制，但控件尺寸仍需显式设置，也没有自动 HiDPI/字距/连字处理

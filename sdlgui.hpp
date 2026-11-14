@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <cstring>
 #include <cmath>
+#include <cctype>
+#include <cwctype>
 #include <algorithm>
 
 #ifdef SDLGUI_USE_SDL_IMAGE
@@ -806,6 +808,9 @@ private:
     int selected_ = -1;
     int hovered_  = -1;
     int scrollOffY_ = 0;
+    bool draggingScrollbar_ = false;
+    int  dragStartY_ = 0;
+    int  dragStartOff_ = 0;
     int itemH_ = 20;
     Color textColor_ = Color::White;
     Color bgColor_ = Color(30, 30, 30);
@@ -1213,8 +1218,21 @@ public:
     void     setSelectionColor(Color color);
     void     setLineSpacing(int px);   //extra pixels between lines
     void     setLetterSpacing(int px); //extra pixels between characters
+    void     setShowLineNumbers(bool on) { showLineNumbers_ = on; refreshLayout(); markDirty(); }
+    void     setAutoIndent(bool on) { autoIndent_ = on; }
+    void     setSmartBackspace(bool on) { smartBackspace_ = on; }
+    void     setIndentWithSpaces(bool on) { indentWithSpaces_ = on; }
+    void     setTabWidth(int width)
+    {
+        tabWidth_ = std::max(1, std::min(width, 16));
+    }
     int      lineSpacing() const { return lineSpacing_; }
     int      letterSpacing() const { return letterSpacing_; }
+    bool     showLineNumbers() const { return showLineNumbers_; }
+    bool     autoIndent() const { return autoIndent_; }
+    bool     smartBackspace() const { return smartBackspace_; }
+    bool     indentWithSpaces() const { return indentWithSpaces_; }
+    int      tabWidth() const { return tabWidth_; }
     const std::string& text()     const { return text_; }
     Color    textColor()          const { return textColor_; }
     bool     readOnly()           const { return readOnly_; }
@@ -1238,10 +1256,13 @@ public:
     int  cursorColumn() const { return cursorCol_; }
 
     void insertText(const std::string& text);
+    void insertNewline();
     void backspace();
     void deleteForward();
     void moveCursorLeft(bool select = false);
     void moveCursorRight(bool select = false);
+    void moveCursorWordLeft(bool select = false);
+    void moveCursorWordRight(bool select = false);
     void moveCursorUp(bool select = false);
     void moveCursorDown(bool select = false);
     void moveCursorHome(bool select = false);
@@ -1264,6 +1285,11 @@ private:
     Color       borderColor_ = Color(70, 70, 75);
     int         lineSpacing_ = 0;
     int         letterSpacing_ = 0;
+    bool        showLineNumbers_ = false;
+    bool        autoIndent_ = false;
+    bool        smartBackspace_ = false;
+    bool        indentWithSpaces_ = true;
+    int         tabWidth_ = 4;
     bool        readOnly_  = false;
     int         cursorLine_ = 0, cursorCol_ = 0;
     int         selAnchorLine_ = -1, selAnchorCol_ = -1;
@@ -1280,10 +1306,13 @@ private:
     bool        deleteSelection();
     void        selectionBounds(int& sl, int& sc, int& el, int& ec) const;
     void        lineColAt(int localX, int localY, int& line, int& col) const;
+    void        lineColForOffset(std::size_t off, int& line, int& col) const;
+    static bool isWordCodepoint(uint32_t cp);
     int         lineHeight() const;
     int         glyphAdvance(uint32_t codepoint) const;
     int         prefixWidth(const std::string& line, int bytePos) const;
     int         lineWidth(const std::string& line) const;
+    int         lineNumberGutterWidth() const;
     void        drawLine(SDL_Renderer* renderer, const std::string& line,
                          int x, int y, Color color) const;
 };
@@ -3900,6 +3929,37 @@ ListBox::ListBox(Widget* parent)
     itemH_ = 20;
     onMouseDown = [this](MouseEvent& e)
     {
+        int contentH = (int)items_.size() * itemH_;
+        int sbW = 10;
+
+        //scrollbar
+        if (contentH > height_ && e.x >= width_ - sbW)
+        {
+            int maxOff = contentH - height_;
+            int thumbH = std::max(20, height_ * height_ / contentH);
+            int trackH = height_ - thumbH;
+            int thumbY = trackH > 0
+                ? (int)((long long)trackH * scrollOffY_ / std::max(1, maxOff))
+                : 0;
+
+            if (e.y >= thumbY && e.y < thumbY + thumbH)
+            {
+                draggingScrollbar_ = true;
+                dragStartY_ = e.y;
+                dragStartOff_ = scrollOffY_;
+            }
+            else
+            {
+                int page = std::max(itemH_, height_ - itemH_);
+                if (e.y < thumbY) scrollOffY_ -= page;
+                else              scrollOffY_ += page;
+                if (scrollOffY_ < 0) scrollOffY_ = 0;
+                if (scrollOffY_ > maxOff) scrollOffY_ = maxOff;
+                markDirty();
+            }
+            return;
+        }
+
         int idx = (e.y + scrollOffY_) / itemH_;
         if (idx >= 0 && idx < (int)items_.size())
         {
@@ -3910,10 +3970,38 @@ ListBox::ListBox(Widget* parent)
     };
     onMouseMove = [this](MouseEvent& e)
     {
+        if (draggingScrollbar_)
+        {
+            int contentH = (int)items_.size() * itemH_;
+            int maxOff = std::max(0, contentH - height_);
+            int thumbH = std::max(20, height_ * height_ / std::max(1, contentH));
+            int trackH = height_ - thumbH;
+            if (trackH > 0 && maxOff > 0)
+            {
+                int off = dragStartOff_ +
+                    (int)((long long)(e.y - dragStartY_) * maxOff / trackH);
+                if (off < 0) off = 0;
+                if (off > maxOff) off = maxOff;
+                if (off != scrollOffY_)
+                {
+                    scrollOffY_ = off;
+                    markDirty();
+                }
+            }
+            return;
+        }
+
         int idx = (e.y + scrollOffY_) / itemH_;
+        if (e.x >= width_ - 10 && (int)items_.size() * itemH_ > height_)
+            idx = -1;
+
         int old = hovered_;
         hovered_ = (idx >= 0 && idx < (int)items_.size()) ? idx : -1;
         if (old != hovered_) markDirty();
+    };
+    onMouseUp = [this](MouseEvent&)
+    {
+        draggingScrollbar_ = false;
     };
     onMouseLeave = [this](MouseEvent&)
     {
@@ -4010,6 +4098,38 @@ void ListBox::onRender(SDL_Renderer* renderer)
         {
             detail::drawText(renderer, items_[i].c_str(), r.x + 4, y + 2, textColor_);
         }
+    }
+
+    int contentH = (int)items_.size() * itemH_;
+    if (contentH > height_)
+    {
+        const int sbW = 10;
+        int maxOff = contentH - height_;
+        int thumbH = std::max(20, height_ * height_ / contentH);
+        int trackH = height_ - thumbH;
+        int thumbY = trackH > 0
+            ? (int)((long long)trackH * scrollOffY_ / std::max(1, maxOff))
+            : 0;
+
+        SDL_FRect track = { (float)(r.x + r.w - sbW), (float)r.y,
+                            (float)sbW, (float)r.h };
+        SDL_SetRenderDrawColor(renderer,
+            (Uint8)(bgColor_.r * 9 / 10),
+            (Uint8)(bgColor_.g * 9 / 10),
+            (Uint8)(bgColor_.b * 9 / 10), 255);
+        SDL_RenderFillRect(renderer, &track);
+
+        SDL_FRect thumb = { (float)(r.x + r.w - sbW + 1),
+                            (float)(r.y + thumbY),
+                            (float)(sbW - 2), (float)thumbH };
+        SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g,
+                               borderColor_.b, borderColor_.a);
+        SDL_RenderFillRect(renderer, &thumb);
+        SDL_SetRenderDrawColor(renderer,
+            (Uint8)((borderColor_.r + textColor_.r) / 2),
+            (Uint8)((borderColor_.g + textColor_.g) / 2),
+            (Uint8)((borderColor_.b + textColor_.b) / 2), 255);
+        SDL_RenderRect(renderer, &thumb);
     }
 
     SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g, borderColor_.b, borderColor_.a);
@@ -4884,7 +5004,8 @@ void TextArea::lineColAt(int localX, int localY, int& line, int& col) const
     if (line >= (int)lines.size()) line = (int)lines.size() - 1;
 
     const std::string& ln = lines[line];
-    int targetX = localX + scrollX_ - 4;
+    int targetX = localX + scrollX_ - lineNumberGutterWidth() - 4;
+    if (targetX < 0) targetX = 0;
     int x = 0;
     int chars = 0;
     col = 0;
@@ -4908,6 +5029,24 @@ void TextArea::lineColAt(int localX, int localY, int& line, int& col) const
 int TextArea::lineHeight() const
 {
     return std::max(1, currentFont()->lineHeight() + lineSpacing_);
+}
+
+int TextArea::lineNumberGutterWidth() const
+{
+    if (!showLineNumbers_)
+        return 0;
+
+    int n = (int)splitLines().size();
+    int digits = 1;
+    while (n >= 10)
+    {
+        n /= 10;
+        ++digits;
+    }
+
+    int dw = currentFont()->advance('0');
+    if (dw <= 0) dw = 8;
+    return std::max(24, digits * dw + 16);
 }
 
 int TextArea::glyphAdvance(uint32_t codepoint) const
@@ -4972,9 +5111,10 @@ void TextArea::drawLine(SDL_Renderer* renderer, const std::string& line,
 void TextArea::refreshLayout()
 {
     auto lines = splitLines();
+    int gutter = lineNumberGutterWidth();
     int maxW = width_;
     for (auto& l : lines)
-        maxW = std::max(maxW, lineWidth(l) + 8);
+        maxW = std::max(maxW, gutter + lineWidth(l) + 8);
 
     int lineH = lineHeight();
     setContentSize(maxW, (int)lines.size() * lineH);
@@ -4998,7 +5138,8 @@ void TextArea::ensureCursorVisible()
     else if (bottom > scrollY_ + height_)
         setScrollOffset(scrollX_, bottom - height_);
 
-    int cx = 4 + prefixWidth(lines[cursorLine_], cursorCol_);
+    int cx = lineNumberGutterWidth() + 4 +
+             prefixWidth(lines[cursorLine_], cursorCol_);
     if (cx < scrollX_)
         setScrollOffset(cx - 4, scrollY_);
     else if (cx > scrollX_ + width_ - 8)
@@ -5050,6 +5191,49 @@ void TextArea::insertText(const std::string& text)
     refreshLayout();
 }
 
+void TextArea::insertNewline()
+{
+    if (readOnly_) return;
+
+    std::string insert = "\n";
+    if (autoIndent_)
+    {
+        auto lines = splitLines();
+        const std::string& ln = lines[cursorLine_];
+        int limit = std::min(cursorCol_, (int)ln.size());
+
+        int indentEnd = 0;
+        while (indentEnd < limit &&
+               (ln[indentEnd] == ' ' || ln[indentEnd] == '\t'))
+            ++indentEnd;
+
+        std::string indent = ln.substr(0, (std::size_t)indentEnd);
+
+        //A line ending in an opening bracket gets one extra level. This is
+        //deliberately simple and does not try to understand the language.
+        int significantEnd = limit;
+        while (significantEnd > 0 &&
+               (ln[significantEnd - 1] == ' ' ||
+                ln[significantEnd - 1] == '\t'))
+            --significantEnd;
+        if (significantEnd > 0)
+        {
+            char last = ln[significantEnd - 1];
+            if (last == '{' || last == '[' || last == '(')
+            {
+                if (indentWithSpaces_)
+                    indent.append((std::size_t)tabWidth_, ' ');
+                else
+                    indent.push_back('\t');
+            }
+        }
+
+        insert += indent;
+    }
+
+    insertText(insert);
+}
+
 void TextArea::backspace()
 {
     if (readOnly_) return;
@@ -5061,6 +5245,47 @@ void TextArea::backspace()
         auto lines = splitLines();
         const std::string& ln = lines[cursorLine_];
         int start = detail::utf8Prev(ln, cursorCol_);
+
+        //Inside converted indentation, remove a whole soft-tab stop instead
+        //of a single space. Real tabs are still removed one at a time.
+        if (smartBackspace_ && tabWidth_ > 0)
+        {
+            bool indentation = true;
+            for (int i = 0; i < cursorCol_; ++i)
+            {
+                if (ln[i] != ' ' && ln[i] != '\t')
+                {
+                    indentation = false;
+                    break;
+                }
+            }
+
+            if (indentation)
+            {
+                int visual = 0;
+                for (int i = 0; i < cursorCol_; ++i)
+                {
+                    if (ln[i] == '\t')
+                        visual += tabWidth_ - (visual % tabWidth_);
+                    else
+                        ++visual;
+                }
+
+                int target = visual > 0
+                    ? ((visual - 1) / tabWidth_) * tabWidth_
+                    : 0;
+                int newCol = cursorCol_;
+                while (newCol > 0 && visual > target &&
+                       ln[newCol - 1] == ' ')
+                {
+                    --newCol;
+                    --visual;
+                }
+                if (newCol < cursorCol_)
+                    start = newCol;
+            }
+        }
+
         std::size_t off = offsetAt(cursorLine_, start);
         text_.erase(off, (std::size_t)(cursorCol_ - start));
         cursorCol_ = start;
@@ -5150,6 +5375,111 @@ void TextArea::moveCursorRight(bool select)
         cursorCol_ = 0;
     }
 
+    cursorTick_ = SDL_GetTicks();
+    ensureCursorVisible();
+    markDirty();
+}
+
+void TextArea::lineColForOffset(std::size_t off, int& line, int& col) const
+{
+    if (off > text_.size())
+        off = text_.size();
+
+    line = 0;
+    std::size_t start = 0;
+    for (std::size_t i = 0; i < off; ++i)
+    {
+        if (text_[i] == '\n')
+        {
+            ++line;
+            start = i + 1;
+        }
+    }
+    col = (int)(off - start);
+}
+
+bool TextArea::isWordCodepoint(uint32_t cp)
+{
+    if (cp < 0x80)
+        return std::isalnum((int)cp) != 0 || cp == '_';
+
+    //Treat CJK punctuation and ideographic space as separators.
+    if (cp == 0x3000) return false;
+    if (cp >= 0x3001 && cp <= 0x303F) return false;
+    if (cp >= 0xFF01 && cp <= 0xFF0F) return false;
+    if (cp >= 0xFF1A && cp <= 0xFF20) return false;
+    if (cp >= 0xFF3B && cp <= 0xFF40) return false;
+    if (cp >= 0xFF5B && cp <= 0xFF65) return false;
+
+    return std::iswspace((wint_t)cp) == 0 &&
+           std::iswpunct((wint_t)cp) == 0;
+}
+
+void TextArea::moveCursorWordLeft(bool select)
+{
+    if (select)
+    {
+        if (selAnchorLine_ < 0) { selAnchorLine_ = cursorLine_; selAnchorCol_ = cursorCol_; }
+    }
+    else { selAnchorLine_ = -1; selAnchorCol_ = -1; }
+
+    clampCursor();
+    std::size_t p = offsetAt(cursorLine_, cursorCol_);
+
+    //Skip separators to the left, then the preceding word.
+    while (p > 0)
+    {
+        int prev = detail::utf8Prev(text_, (int)p);
+        const char* q = text_.c_str() + prev;
+        uint32_t cp = detail::decodeUTF8(q);
+        if (isWordCodepoint(cp)) break;
+        p = (std::size_t)prev;
+    }
+    while (p > 0)
+    {
+        int prev = detail::utf8Prev(text_, (int)p);
+        const char* q = text_.c_str() + prev;
+        uint32_t cp = detail::decodeUTF8(q);
+        if (!isWordCodepoint(cp)) break;
+        p = (std::size_t)prev;
+    }
+
+    lineColForOffset(p, cursorLine_, cursorCol_);
+    cursorTick_ = SDL_GetTicks();
+    ensureCursorVisible();
+    markDirty();
+}
+
+void TextArea::moveCursorWordRight(bool select)
+{
+    if (select)
+    {
+        if (selAnchorLine_ < 0) { selAnchorLine_ = cursorLine_; selAnchorCol_ = cursorCol_; }
+    }
+    else { selAnchorLine_ = -1; selAnchorCol_ = -1; }
+
+    clampCursor();
+    std::size_t p = offsetAt(cursorLine_, cursorCol_);
+
+    //Skip separators to the right, then the following word.
+    while (p < text_.size())
+    {
+        const char* start = text_.c_str() + p;
+        const char* q = start;
+        uint32_t cp = detail::decodeUTF8(q);
+        if (isWordCodepoint(cp)) break;
+        p += (std::size_t)(q - start);
+    }
+    while (p < text_.size())
+    {
+        const char* start = text_.c_str() + p;
+        const char* q = start;
+        uint32_t cp = detail::decodeUTF8(q);
+        if (!isWordCodepoint(cp)) break;
+        p += (std::size_t)(q - start);
+    }
+
+    lineColForOffset(p, cursorLine_, cursorCol_);
     cursorTick_ = SDL_GetTicks();
     ensureCursorVisible();
     markDirty();
@@ -5250,7 +5580,8 @@ bool TextArea::textInputRect(Rect& rect) const
 
     int lineH = lineHeight();
     Rect r = absoluteRect();
-    int cx = r.x + 4 - scrollX_ + prefixWidth(lines[line], col);
+    int cx = r.x + lineNumberGutterWidth() + 4 - scrollX_ +
+             prefixWidth(lines[line], col);
     int cy = r.y + line * lineH - scrollY_;
     rect = { cx, cy, 1, lineH };
     return true;
@@ -5283,6 +5614,7 @@ void TextArea::onRender(SDL_Renderer* renderer)
     auto lines = splitLines();
     int maxW = 0;
     int lineH = lineHeight();
+    int gutter = lineNumberGutterWidth();
 
     bool sel = hasSelection();
     int selSL = 0, selSC = 0, selEL = 0, selEC = 0;
@@ -5301,8 +5633,8 @@ void TextArea::onRender(SDL_Renderer* renderer)
             int c1 = (i == selEL) ? selEC : (int)ln.size();
             if (c1 < c0) c1 = c0;
 
-            int x0 = r.x + 4 - scrollX_ + prefixWidth(ln, c0);
-            int x1 = r.x + 4 - scrollX_ + prefixWidth(ln, c1);
+            int x0 = r.x + gutter + 4 - scrollX_ + prefixWidth(ln, c0);
+            int x1 = r.x + gutter + 4 - scrollX_ + prefixWidth(ln, c1);
             if (x1 == x0) x1 = x0 + 4; //empty line / newline marker
 
             SDL_FRect selr = { (float)x0, (float)ly, (float)(x1 - x0), (float)lineH };
@@ -5311,9 +5643,9 @@ void TextArea::onRender(SDL_Renderer* renderer)
             SDL_RenderFillRect(renderer, &selr);
         }
 
-        drawLine(renderer, lines[i], r.x + 4 - scrollX_, ly, textColor_);
+        drawLine(renderer, lines[i], r.x + gutter + 4 - scrollX_, ly, textColor_);
 
-        int lw = lineWidth(lines[i]);
+        int lw = gutter + lineWidth(lines[i]);
         if (lw > maxW) maxW = lw;
     }
 
@@ -5327,7 +5659,8 @@ void TextArea::onRender(SDL_Renderer* renderer)
             if (col > (int)lines[cursorLine_].size())
                 col = (int)lines[cursorLine_].size();
 
-            int cx = r.x + 4 - scrollX_ + prefixWidth(lines[cursorLine_], col);
+            int cx = r.x + gutter + 4 - scrollX_ +
+                     prefixWidth(lines[cursorLine_], col);
             int cy = r.y + cursorLine_ * lineH - scrollY_;
             if (cy + lineH >= r.y && cy <= r.y + r.h)
             {
@@ -5335,6 +5668,40 @@ void TextArea::onRender(SDL_Renderer* renderer)
                                        cursorColor_.b, cursorColor_.a);
                 SDL_RenderLine(renderer, cx, cy, cx, cy + lineH);
             }
+        }
+    }
+
+    //line-number gutter: draw after the text so horizontally scrolled text
+    //is clipped underneath it.
+    if (gutter > 0)
+    {
+        SDL_FRect gb = { (float)(r.x + 1), (float)(r.y + 1),
+                         (float)(gutter - 1), (float)(r.h - 2) };
+        SDL_SetRenderDrawColor(renderer,
+            (Uint8)(bgColor_.r * 4 / 5),
+            (Uint8)(bgColor_.g * 4 / 5),
+            (Uint8)(bgColor_.b * 4 / 5),
+            255);
+        SDL_RenderFillRect(renderer, &gb);
+
+        SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g,
+                               borderColor_.b, borderColor_.a);
+        SDL_RenderLine(renderer, (float)(r.x + gutter - 1), (float)r.y,
+                       (float)(r.x + gutter - 1), (float)(r.y + r.h));
+
+        int first = std::max(0, scrollY_ / lineH);
+        int last = std::min((int)lines.size(),
+                            (scrollY_ + r.h) / lineH + 1);
+        Color numberColor = getWindow()
+            ? getWindow()->theme().mutedText
+            : Color(115, 120, 130);
+        for (int i = first; i < last; ++i)
+        {
+            std::string num = std::to_string(i + 1);
+            int nw = detail::textWidth(num.c_str());
+            int nx = r.x + gutter - 8 - nw;
+            int ny = r.y + i * lineH - scrollY_;
+            detail::drawText(renderer, num.c_str(), nx, ny, numberColor);
         }
     }
 
@@ -7275,7 +7642,7 @@ void Application::handleKeyEvent(const SDL_Event& ev)
 
             case TextEditAction::Backspace:     ta->backspace(); break;
             case TextEditAction::DeleteForward: ta->deleteForward(); break;
-            case TextEditAction::InsertNewline: ta->insertText("\n"); break;
+            case TextEditAction::InsertNewline: ta->insertNewline(); break;
 
             default:
                 break;
