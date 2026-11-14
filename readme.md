@@ -19,6 +19,7 @@
 - `addChild<T>()` template — no manual `make_unique` + `move`
 - Chainable position/size API: `pos()->sz()`
 - Opt-in layout: edge anchors, HBox/VBox linear layout, draggable SplitView
+- Built-in dark/light themes plus per-widget color APIs
 - Custom title bar with minimize, maximize, close buttons
 - TextBox / TextArea / ComboBox editing with caret and clipboard support; TextBox also supports placeholder, password masking, and max length; TextBox/TextArea editing keys are rebindable; IME candidate window follows the caret
 - Render-on-demand: idle windows skip Clear / Draw / Present
@@ -877,6 +878,43 @@ Switching fonts:
 
 Without a built-in font and without a custom `Font`, `drawText()` is a no-op — no text is rendered, and text width defaults to 8px per character.
 
+### Theming
+
+Apply a whole-window style in one call:
+
+```cpp
+win.setTheme(sdlgui::Theme::light());   // white theme
+win.setTheme(sdlgui::Theme::dark());    // default dark theme
+
+// Or apply to every window:
+app.setTheme(sdlgui::Theme::light());
+
+// Or to a widget subtree:
+sdlgui::applyTheme(root, sdlgui::Theme::light());
+```
+
+`Theme` contains colors for windows, buttons, inputs, panels, lists, scrollbars, menus, popups, TextArea, sliders, title bars, message boxes, checkboxes and SplitView dividers. Individual widgets can still be overridden after applying a theme.
+
+**Per-widget color APIs:**
+
+| Widget | Setters |
+|--------|---------|
+| `Window` | `setBackgroundColor`, `setTitleBarColor`, `setTitleTextColor`, `setTitleButtonColors`, `setTitleCloseColor` |
+| `Label` | `setTextColor` |
+| `Button` | `setTextColor`, `setBgColor`, `setBorderColor` |
+| `CheckBox` | `setTextColor`, `setCheckColor`, `setBoxColor`, `setBorderColor` |
+| `TextBox` | `setBackgroundColor`, `setTextColor`, `setPlaceholderColor`, `setCursorColor`, `setSelectionColor`, `setBorderColor` |
+| `TextArea` | `setBackgroundColor`, `setTextColor`, `setCursorColor`, `setSelectionColor`, `setBorderColor` |
+| `ListBox` | `setBackgroundColor`, `setTextColor`, `setSelectionColor`, `setHoverColor`, `setBorderColor` |
+| `ScrollView` | `setScrollbarColors(track, thumb)` |
+| `Slider` | `setTrackColor`, `setFillColor`, `setThumbColor`, `setBorderColor` |
+| `MenuBar` | `setBackgroundColor`, `setTextColor`, `setHoverColor`, `setPopupColor`, `setBorderColor`, `setItemHoverColor`, `setDisabledTextColor`, `setShortcutColor`, `setAccentColor` |
+| `ContextMenu` | `setBackgroundColor`, `setTextColor`, `setHoverColor`, `setBorderColor`, `setDisabledTextColor`, `setSeparatorColor` |
+| `DropDown` | `setBackgroundColor`, `setTextColor`, `setBorderColor`, `setArrowColor`, `setPopupColor`, `setSelectionColor` |
+| `ComboBox` | same as DropDown plus `setButtonColor` |
+| `MessageBox` | `setOverlayColor`, `setBackgroundColor`, `setBorderColor`, `setTextColor`, `setTitleColors`, `setButtonColors`, `applyTheme` |
+| `SplitView` | `setDividerColor` |
+
 ### Color Reference
 
 ```cpp
@@ -1062,6 +1100,7 @@ BSD 2-Clause License. See [LICENSE](LICENSE).
 - 通过 `setFont()` / `Font` metrics 支持运行时切换字体，并自动失效缓存和布局
 - `addChild<T>()` 模板 — 无需手动 `make_unique` + `move`
 - 可链式调用的位置/大小 API：`pos()->sz()`
+- 内置深色/浅色主题，并提供逐控件颜色 API
 - 自定义标题栏（最小化、最大化、关闭按钮）
 - TextBox / TextArea / ComboBox 编辑：光标、剪贴板（TextBox 另支持占位符、密码掩码和最大长度；TextBox/TextArea 编辑键位可复写；输入法候选窗跟随光标）
 - 按需重绘：空闲窗口跳过 Clear / Draw / Present
@@ -1914,6 +1953,43 @@ sdlgui::setFont(font);
 #### 兜底行为
 
 无内置字体且无自定义 `Font` 时，`drawText()` 为空操作——不渲染文本，文本宽度默认每个字符 8px。
+
+### 主题
+
+一键应用整窗样式：
+
+```cpp
+win.setTheme(sdlgui::Theme::light());   // 白色主题
+win.setTheme(sdlgui::Theme::dark());    // 默认深色主题
+
+// 所有窗口：
+app.setTheme(sdlgui::Theme::light());
+
+// 只应用到一个控件子树：
+sdlgui::applyTheme(root, sdlgui::Theme::light());
+```
+
+`Theme` 包含窗口、按钮、输入框、面板、列表、滚动条、菜单、弹出层、TextArea、Slider、标题栏、消息框、CheckBox 和 SplitView 分隔条的颜色。应用主题后仍可单独覆盖某个控件的颜色。
+
+**各控件颜色 API：**
+
+| 控件 | Setter |
+|------|--------|
+| `Window` | `setBackgroundColor`、`setTitleBarColor`、`setTitleTextColor`、`setTitleButtonColors`、`setTitleCloseColor` |
+| `Label` | `setTextColor` |
+| `Button` | `setTextColor`、`setBgColor`、`setBorderColor` |
+| `CheckBox` | `setTextColor`、`setCheckColor`、`setBoxColor`、`setBorderColor` |
+| `TextBox` | `setBackgroundColor`、`setTextColor`、`setPlaceholderColor`、`setCursorColor`、`setSelectionColor`、`setBorderColor` |
+| `TextArea` | `setBackgroundColor`、`setTextColor`、`setCursorColor`、`setSelectionColor`、`setBorderColor` |
+| `ListBox` | `setBackgroundColor`、`setTextColor`、`setSelectionColor`、`setHoverColor`、`setBorderColor` |
+| `ScrollView` | `setScrollbarColors(track, thumb)` |
+| `Slider` | `setTrackColor`、`setFillColor`、`setThumbColor`、`setBorderColor` |
+| `MenuBar` | `setBackgroundColor`、`setTextColor`、`setHoverColor`、`setPopupColor`、`setBorderColor`、`setItemHoverColor`、`setDisabledTextColor`、`setShortcutColor`、`setAccentColor` |
+| `ContextMenu` | `setBackgroundColor`、`setTextColor`、`setHoverColor`、`setBorderColor`、`setDisabledTextColor`、`setSeparatorColor` |
+| `DropDown` | `setBackgroundColor`、`setTextColor`、`setBorderColor`、`setArrowColor`、`setPopupColor`、`setSelectionColor` |
+| `ComboBox` | 同 DropDown，另加 `setButtonColor` |
+| `MessageBox` | `setOverlayColor`、`setBackgroundColor`、`setBorderColor`、`setTextColor`、`setTitleColors`、`setButtonColors`、`applyTheme` |
+| `SplitView` | `setDividerColor` |
 
 ### 颜色参考
 

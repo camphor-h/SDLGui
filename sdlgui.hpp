@@ -86,6 +86,90 @@ struct Color
 };
 
 //==============================================================================
+// Theme
+//==============================================================================
+struct Theme
+{
+    Color windowBg      = Color(30, 30, 30);
+    Color text          = Color::White;
+    Color disabledText  = Color(100, 100, 100);
+    Color mutedText     = Color(160, 160, 160);
+    Color border        = Color(100, 100, 100);
+
+    Color buttonBg      = Color(60, 60, 60);
+    Color buttonHover   = Color(80, 80, 80);
+    Color buttonPressed = Color(40, 40, 40);
+    Color buttonText    = Color::White;
+    Color buttonBorder  = Color(100, 100, 100);
+
+    Color inputBg       = Color::White;
+    Color inputText     = Color::Black;
+    Color inputPlaceholder = Color(130, 130, 130);
+    Color inputBorder   = Color(140, 140, 140);
+    Color inputCursor   = Color::Black;
+    Color inputSelection = Color(50, 100, 180);
+
+    Color panelBg       = Color(40, 40, 40);
+    Color panelBorder   = Color(70, 70, 70);
+    Color rowHover      = Color(50, 50, 60);
+    Color rowSelected   = Color(40, 80, 140);
+    Color rowSelectedText = Color::White;
+
+    Color scrollTrack   = Color(40, 40, 40);
+    Color scrollThumb   = Color(100, 100, 100);
+
+    Color menuBarBg     = Color(50, 50, 50);
+    Color menuHover     = Color(65, 65, 65);
+    Color menuText      = Color::White;
+    Color menuDisabled  = Color(100, 100, 100);
+    Color menuShortcut  = Color(160, 160, 160);
+    Color menuPopupBg   = Color(40, 40, 40);
+    Color menuItemHover = Color(50, 100, 180);
+    Color menuAccent    = Color(60, 120, 200);
+
+    Color textAreaBg    = Color(25, 25, 28);
+    Color textAreaText  = Color::White;
+    Color textAreaCursor = Color(200, 200, 200);
+    Color textAreaSelection = Color(50, 100, 180, 180);
+
+    Color sliderTrack   = Color(60, 60, 60);
+    Color sliderFill    = Color(80, 140, 200);
+    Color sliderThumb   = Color(140, 140, 140);
+    Color sliderThumbHover = Color(180, 180, 180);
+    Color sliderBorder  = Color(100, 100, 100);
+
+    Color titleBarBg    = Color(50, 50, 50);
+    Color titleText     = Color::White;
+    Color titleButton   = Color(50, 50, 50);
+    Color titleButtonHover = Color(80, 80, 80);
+    Color titleCloseHover = Color(180, 30, 30);
+
+    Color overlay       = Color(0, 0, 0, 180);
+    Color dialogBg      = Color(45, 45, 45);
+    Color dialogBorder  = Color(70, 70, 70);
+    Color dialogTitleBg = Color(55, 55, 55);
+    Color dialogTitleText = Color::White;
+    Color dialogText    = Color::White;
+    Color dialogButton  = Color(60, 60, 60);
+    Color dialogButtonHover = Color(85, 85, 85);
+    Color dialogButtonBorder = Color(100, 100, 100);
+    Color dialogButtonText = Color::White;
+
+    Color checkboxBox   = Color(255, 255, 255);
+    Color checkboxBorder = Color(100, 100, 100);
+    Color checkboxCheck = Color(0, 160, 0);
+
+    Color divider       = Color(70, 70, 75);
+
+    static Theme dark() { return Theme{}; }
+    static Theme light();
+};
+
+void applyTheme(class Widget& root, const Theme& theme);
+void applyTheme(class Window& window, const Theme& theme);
+void applyTheme(class Application& app, const Theme& theme);
+
+//==============================================================================
 // Layout anchors
 //==============================================================================
 enum AnchorFlag : uint8_t
@@ -547,11 +631,13 @@ public:
     void     setText(const std::string& text);
     void     setTextColor(Color color);
     void     setBgColor(Color normal, Color hover, Color pressed);
+    void     setBorderColor(Color color);
     const std::string& text() const { return text_; }
 
     Widget* txt(const std::string& s) { setText(s); return this; }
     Widget* clr(Color c)              { setTextColor(c); return this; }
     Widget* bg(Color n, Color h, Color p) { setBgColor(n, h, p); return this; }
+    Widget* borderClr(Color c)        { setBorderColor(c); return this; }
 
 protected:
     void onRender(SDL_Renderer* renderer) override;
@@ -563,6 +649,7 @@ private:
     Color       bgNormal_  = Color(60, 60, 60);
     Color       bgHover_   = Color(80, 80, 80);
     Color       bgPressed_ = Color(40, 40, 40);
+    Color       borderColor_ = Color(100, 100, 100);
 };
 
 //==============================================================================
@@ -577,12 +664,15 @@ public:
     void     setChecked(bool checked);
     void     setTextColor(Color color);
     void     setCheckColor(Color color);
+    void     setBoxColor(Color color);
+    void     setBorderColor(Color color);
     bool     isChecked() const { return checked_; }
     const std::string& text() const { return text_; }
 
     Widget* txt(const std::string& s)   { setText(s); return this; }
     Widget* clr(Color c)                { setTextColor(c); return this; }
     Widget* checkClr(Color c)           { setCheckColor(c); return this; }
+    Widget* boxClr(Color c)             { setBoxColor(c); return this; }
 
 protected:
     void onRender(SDL_Renderer* renderer) override;
@@ -592,6 +682,8 @@ private:
     bool        checked_ = false;
     Color       textColor_ = Color::White;
     Color       checkColor_ = Color(0, 160, 0);
+    Color       boxColor_ = Color(255, 255, 255);
+    Color       borderColor_ = Color(100, 100, 100);
 };
 
 //==============================================================================
@@ -607,6 +699,7 @@ public:
     void     setBackgroundColor(Color color);
     void     setCursorColor(Color color);
     void     setSelectionColor(Color color);
+    void     setBorderColor(Color color);
     void     setPlaceholder(const std::string& text);
     void     setPlaceholderColor(Color color);
     void     setMaxLength(int maxChars); //0 = unlimited
@@ -663,6 +756,7 @@ private:
     Color       bgColor_    = Color::White;
     Color       cursorColor_ = Color::Black;
     Color       selColor_   = Color(50, 100, 180);
+    Color       borderColor_ = Color(140, 140, 140);
     std::string placeholder_;
     Color       placeholderColor_ = Color(130, 130, 130);
     int         maxLength_  = 0;
@@ -693,6 +787,12 @@ public:
     const std::string& selectedItem() const;
     int  itemCount() const { return (int)items_.size(); }
 
+    void setBackgroundColor(Color color);
+    void setTextColor(Color color);
+    void setSelectionColor(Color color);
+    void setHoverColor(Color color);
+    void setBorderColor(Color color);
+
     std::function<void(int)> onItemSelected;
 
     Widget* txt(const std::string& s) { addItem(s); return this; }
@@ -708,6 +808,10 @@ private:
     int scrollOffY_ = 0;
     int itemH_ = 20;
     Color textColor_ = Color::White;
+    Color bgColor_ = Color(30, 30, 30);
+    Color selColor_ = Color(40, 80, 140);
+    Color hoverColor_ = Color(50, 50, 60);
+    Color borderColor_ = Color(100, 100, 100);
 };
 
 //==============================================================================
@@ -725,6 +829,16 @@ public:
     int  addSeparator(int menuIdx);
     void clearMenu(int menuIdx);
     void clearAll();
+
+    void setBackgroundColor(Color color);
+    void setTextColor(Color color);
+    void setHoverColor(Color color);
+    void setPopupColor(Color color);
+    void setBorderColor(Color color);
+    void setItemHoverColor(Color color);
+    void setDisabledTextColor(Color color);
+    void setShortcutColor(Color color);
+    void setAccentColor(Color color);
 
     void closeAll();
     bool isMenuOpen() const { return openIdx_ >= 0; }
@@ -766,6 +880,16 @@ private:
     int hoveredTitle_ = -1;
     int hoveredItem_ = -1;
     bool switching_ = false; //true after opening via hover-on-another-title
+
+    Color bgColor_ = Color(50, 50, 50);
+    Color textColor_ = Color::White;
+    Color hoverColor_ = Color(65, 65, 65);
+    Color popupColor_ = Color(40, 40, 40);
+    Color borderColor_ = Color(70, 70, 70);
+    Color itemHoverColor_ = Color(50, 100, 180);
+    Color disabledTextColor_ = Color(100, 100, 100);
+    Color shortcutColor_ = Color(160, 160, 160);
+    Color accentColor_ = Color(60, 120, 200);
 };
 
 //==============================================================================
@@ -792,6 +916,13 @@ public:
     bool isActive() const { return active_; }
     int  contentHeight() const { return (int)items_.size() * 22; }
 
+    void setBackgroundColor(Color color);
+    void setTextColor(Color color);
+    void setHoverColor(Color color);
+    void setBorderColor(Color color);
+    void setDisabledTextColor(Color color);
+    void setSeparatorColor(Color color);
+
     std::function<void()> onDismiss;
 
     void renderContextMenu(SDL_Renderer* r) { if (active_) onRender(r); }
@@ -805,6 +936,13 @@ private:
     int hoveredIdx_ = -1;
     int screenX_ = 0, screenY_ = 0;
     bool active_ = false;
+
+    Color bgColor_ = Color(40, 40, 40);
+    Color textColor_ = Color::White;
+    Color hoverColor_ = Color(50, 100, 180);
+    Color borderColor_ = Color(70, 70, 70);
+    Color disabledTextColor_ = Color(100, 100, 100);
+    Color separatorColor_ = Color(70, 70, 70);
 
     friend class Application;
 };
@@ -828,6 +966,14 @@ public:
     int  hitTestButton(int mx, int my) const;
     void renderOverlay(SDL_Renderer* renderer, int windowW, int windowH);
 
+    void setOverlayColor(Color color);
+    void setBackgroundColor(Color color);
+    void setBorderColor(Color color);
+    void setTextColor(Color color);
+    void setTitleColors(Color background, Color text);
+    void setButtonColors(Color normal, Color hover, Color border, Color text);
+    void applyTheme(const Theme& theme);
+
 private:
     struct BtnInfo
     {
@@ -848,6 +994,17 @@ private:
 
     int dlgX_ = 0, dlgY_ = 0, dlgW_ = 300, dlgH_ = 150;
 
+    Color overlayColor_ = Color(0, 0, 0, 180);
+    Color bgColor_ = Color(45, 45, 45);
+    Color borderColor_ = Color(70, 70, 70);
+    Color textColor_ = Color::White;
+    Color titleBgColor_ = Color(55, 55, 55);
+    Color titleTextColor_ = Color::White;
+    Color buttonBgColor_ = Color(60, 60, 60);
+    Color buttonHoverColor_ = Color(85, 85, 85);
+    Color buttonBorderColor_ = Color(100, 100, 100);
+    Color buttonTextColor_ = Color::White;
+
     void calcLayout(int windowW, int windowH);
 
     friend class Application;
@@ -867,6 +1024,11 @@ public:
     float min()   const { return min_; }
     float max()   const { return max_; }
 
+    void setTrackColor(Color color);
+    void setFillColor(Color color);
+    void setThumbColor(Color normal, Color hover);
+    void setBorderColor(Color color);
+
     std::function<void(float)> onValueChanged;
     std::function<void(bool)> onDragChanged;
 
@@ -876,6 +1038,11 @@ protected:
 private:
     float min_ = 0.f, max_ = 100.f, value_ = 50.f;
     bool  dragging_ = false;
+    Color trackColor_ = Color(60, 60, 60);
+    Color fillColor_ = Color(80, 140, 200);
+    Color thumbColor_ = Color(140, 140, 140);
+    Color thumbHoverColor_ = Color(180, 180, 180);
+    Color borderColor_ = Color(100, 100, 100);
 };
 
 //==============================================================================
@@ -890,6 +1057,13 @@ public:
     void clear();
     int  selectedIndex() const { return selected_; }
     void setSelectedIndex(int index);
+
+    void setBackgroundColor(Color color);
+    void setTextColor(Color color);
+    void setBorderColor(Color color);
+    void setArrowColor(Color color);
+    void setPopupColor(Color color);
+    void setSelectionColor(Color color);
 
     bool isPopupOpen() const override { return expanded_; }
     void closePopup() override
@@ -908,6 +1082,12 @@ private:
     int selected_ = -1;
     bool expanded_ = false;
     int listH_ = 0;
+    Color bgColor_ = Color(50, 50, 50);
+    Color textColor_ = Color::White;
+    Color borderColor_ = Color(80, 80, 80);
+    Color arrowColor_ = Color::Gray;
+    Color popupColor_ = Color(30, 30, 35);
+    Color selectionColor_ = Color(40, 80, 140);
 };
 
 //==============================================================================
@@ -924,6 +1104,14 @@ public:
     void setSelectedIndex(int index);
     void setText(const std::string& text);
     std::string text() const { return text_; }
+
+    void setBackgroundColor(Color color);
+    void setTextColor(Color color);
+    void setBorderColor(Color color);
+    void setButtonColor(Color color);
+    void setArrowColor(Color color);
+    void setPopupColor(Color color);
+    void setSelectionColor(Color color);
 
     void insertText(const std::string& text);
     void backspace();
@@ -956,6 +1144,13 @@ private:
     bool expanded_ = false;
     int listH_ = 0;
     bool focused_ = false;
+    Color bgColor_ = Color::White;
+    Color textColor_ = Color::Black;
+    Color borderColor_ = Color(140, 140, 140);
+    Color buttonColor_ = Color(60, 60, 60);
+    Color arrowColor_ = Color::Gray;
+    Color popupColor_ = Color(30, 30, 35);
+    Color selectionColor_ = Color(40, 80, 140);
 };
 
 //==============================================================================
@@ -973,6 +1168,7 @@ public:
 
     void scrollbarV(bool show) { showVScroll_ = show; markDirty(); }
     void scrollbarH(bool show) { showHScroll_ = show; markDirty(); }
+    void setScrollbarColors(Color track, Color thumb);
 
     ScrollView* sbV(bool s) { scrollbarV(s); return this; }
     ScrollView* sbH(bool s) { scrollbarH(s); return this; }
@@ -996,6 +1192,8 @@ private:
     bool sbVertical_ = false;
     bool showVScroll_ = false;
     bool showHScroll_ = false;
+    Color scrollTrackColor_ = Color(40, 40, 40);
+    Color scrollThumbColor_ = Color(100, 100, 100);
 };
 
 //==============================================================================
@@ -1008,6 +1206,9 @@ public:
 
     void     setText(const std::string& text);
     void     setTextColor(Color color);
+    void     setBackgroundColor(Color color);
+    void     setCursorColor(Color color);
+    void     setBorderColor(Color color);
     void     setReadOnly(bool ro);
     void     setSelectionColor(Color color);
     const std::string& text()     const { return text_; }
@@ -1054,7 +1255,9 @@ private:
     std::string text_;
     Color       textColor_ = Color::White;
     Color       bgColor_   = Color(25, 25, 28);
+    Color       cursorColor_ = Color(200, 200, 200);
     Color       selColor_  = Color(50, 100, 180, 180);
+    Color       borderColor_ = Color(70, 70, 75);
     bool        readOnly_  = false;
     int         cursorLine_ = 0, cursorCol_ = 0;
     int         selAnchorLine_ = -1, selAnchorCol_ = -1;
@@ -1089,6 +1292,11 @@ public:
     void     setTitleBarMode(TitleBarMode mode);
     void     setTitleBarHeight(int h);
     void     setBackgroundColor(Color color);
+    void     setTitleBarColor(Color color);
+    void     setTitleTextColor(Color color);
+    void     setTitleButtonColors(Color normal, Color hover);
+    void     setTitleCloseColor(Color color);
+    void     setTheme(const Theme& theme);
     void     setResizable(bool resiz);
     void     requestRedraw() { redraw_ = true; }
     bool     needsRedraw() const;
@@ -1101,6 +1309,7 @@ public:
     int                clientWidth()     const { return clientWidth_; }
     int                clientHeight()    const { return clientHeight_; }
     bool               resizable()       const { return resizable_; }
+    const Theme&       theme()           const { return theme_; }
     SDL_Window*        handle()          const { return sdlWindow_; }
     SDL_Renderer*      renderer()        const { return renderer_; }
     Widget&            root()                  { return *root_; }
@@ -1122,7 +1331,13 @@ private:
     SDL_Window*   sdlWindow_       = nullptr;
     SDL_Renderer* renderer_        = nullptr;
     std::string   title_;
+    Theme         theme_;
     Color         bgColor_         = Color(30, 30, 30);
+    Color         titleBarColor_   = Color(50, 50, 50);
+    Color         titleTextColor_  = Color::White;
+    Color         titleButtonColor_ = Color(50, 50, 50);
+    Color         titleButtonHoverColor_ = Color(80, 80, 80);
+    Color         titleCloseColor_ = Color(180, 30, 30);
     TitleBarMode  titleBarMode_    = TitleBarMode::System;
     int           titleBarHeight_  = 0;
     int           clientWidth_     = 800;
@@ -1178,6 +1393,7 @@ public:
     void    run();
     void    quit();
     void    refreshFont();
+    void    setTheme(const Theme& theme);
 
     void    setFPS(int fps);
     int     fps() const { return targetFps_; }
@@ -2400,6 +2616,16 @@ void MenuBar::clearAll()
     markDirty();
 }
 
+void MenuBar::setBackgroundColor(Color color) { bgColor_ = color; markDirty(); }
+void MenuBar::setTextColor(Color color) { textColor_ = color; markDirty(); }
+void MenuBar::setHoverColor(Color color) { hoverColor_ = color; markDirty(); }
+void MenuBar::setPopupColor(Color color) { popupColor_ = color; markDirty(); }
+void MenuBar::setBorderColor(Color color) { borderColor_ = color; markDirty(); }
+void MenuBar::setItemHoverColor(Color color) { itemHoverColor_ = color; markDirty(); }
+void MenuBar::setDisabledTextColor(Color color) { disabledTextColor_ = color; markDirty(); }
+void MenuBar::setShortcutColor(Color color) { shortcutColor_ = color; markDirty(); }
+void MenuBar::setAccentColor(Color color) { accentColor_ = color; markDirty(); }
+
 void MenuBar::closeAll()
 {
     if (openIdx_ >= 0)
@@ -2479,7 +2705,7 @@ void MenuBar::onRender(SDL_Renderer* renderer)
     detail::ClipGuard clip(renderer, r.x, r.y, r.w, r.h);
 
     //background
-    SDL_SetRenderDrawColor(renderer, 50, 50, 50, 255);
+    SDL_SetRenderDrawColor(renderer, bgColor_.r, bgColor_.g, bgColor_.b, bgColor_.a);
     SDL_FRect fullBar = { (float)r.x, (float)r.y, (float)r.w, (float)r.h };
     SDL_RenderFillRect(renderer, &fullBar);
 
@@ -2488,7 +2714,7 @@ void MenuBar::onRender(SDL_Renderer* renderer)
     {
         int ox = r.x + dropdownLeft();
         int ot = detail::textWidth(menus_[openIdx_].title.c_str());
-        SDL_SetRenderDrawColor(renderer, 60, 120, 200, 255);
+        SDL_SetRenderDrawColor(renderer, accentColor_.r, accentColor_.g, accentColor_.b, accentColor_.a);
         SDL_RenderLine(renderer, ox, r.y + r.h - 1, ox + ot + titlePad_ * 2 - 1, r.y + r.h - 1);
     }
 
@@ -2504,12 +2730,12 @@ void MenuBar::onRender(SDL_Renderer* renderer)
         bool highlight = (i == hoveredTitle_) || (i == openIdx_);
         if (highlight)
         {
-            SDL_SetRenderDrawColor(renderer, 65, 65, 65, 255);
+            SDL_SetRenderDrawColor(renderer, hoverColor_.r, hoverColor_.g, hoverColor_.b, hoverColor_.a);
             SDL_FRect hr = { (float)(r.x + curX), (float)r.y, (float)pw, (float)r.h };
             SDL_RenderFillRect(renderer, &hr);
         }
 
-        detail::drawText(renderer, menus_[i].title.c_str(), tx, ty, Color::White);
+        detail::drawText(renderer, menus_[i].title.c_str(), tx, ty, textColor_);
         curX += pw;
     }
 
@@ -2525,12 +2751,12 @@ void MenuBar::renderDropdownOverlay(SDL_Renderer* renderer)
     Rect dr = dropdownRect();
 
     //dropdown background
-    SDL_SetRenderDrawColor(renderer, 40, 40, 40, 255);
+    SDL_SetRenderDrawColor(renderer, popupColor_.r, popupColor_.g, popupColor_.b, popupColor_.a);
     SDL_FRect dbg = { (float)dr.x, (float)dr.y, (float)dr.w, (float)dr.h };
     SDL_RenderFillRect(renderer, &dbg);
 
     //border
-    SDL_SetRenderDrawColor(renderer, 70, 70, 70, 255);
+    SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g, borderColor_.b, borderColor_.a);
     SDL_RenderRect(renderer, &dbg);
 
     //items
@@ -2541,7 +2767,7 @@ void MenuBar::renderDropdownOverlay(SDL_Renderer* renderer)
 
         if (items[i].separator)
         {
-            SDL_SetRenderDrawColor(renderer, 70, 70, 70, 255);
+            SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g, borderColor_.b, borderColor_.a);
             SDL_RenderLine(renderer, dr.x + 4, ly + itemH_ / 2,
                                dr.x + dr.w - 4, ly + itemH_ / 2);
             continue;
@@ -2550,20 +2776,21 @@ void MenuBar::renderDropdownOverlay(SDL_Renderer* renderer)
         //hover highlight
         if (i == hoveredItem_ && items[i].enabled)
         {
-            SDL_SetRenderDrawColor(renderer, 50, 100, 180, 255);
+            SDL_SetRenderDrawColor(renderer, itemHoverColor_.r, itemHoverColor_.g,
+                                   itemHoverColor_.b, itemHoverColor_.a);
             SDL_FRect hr = { (float)(dr.x + 1), (float)(ly + 1), (float)(dr.w - 2), (float)(itemH_ - 2) };
             SDL_RenderFillRect(renderer, &hr);
         }
 
         //text
-        Color tc = items[i].enabled ? Color::White : Color(100, 100, 100);
+        Color tc = items[i].enabled ? textColor_ : disabledTextColor_;
         detail::drawText(renderer, items[i].text.c_str(), dr.x + 6, ly + 3, tc);
 
         //shortcut
         if (!items[i].shortcut.empty() && items[i].enabled)
         {
             int sx = dr.x + dr.w - 6 - detail::textWidth(items[i].shortcut.c_str());
-            detail::drawText(renderer, items[i].shortcut.c_str(), sx, ly + 3, Color(160, 160, 160));
+            detail::drawText(renderer, items[i].shortcut.c_str(), sx, ly + 3, shortcutColor_);
         }
     }
 }
@@ -3048,6 +3275,12 @@ void Button::setBgColor(Color normal, Color hover, Color pressed)
     markDirty();
 }
 
+void Button::setBorderColor(Color color)
+{
+    borderColor_ = color;
+    markDirty();
+}
+
 void Button::onRender(SDL_Renderer* renderer)
 {
     if (!visible_) return;
@@ -3074,7 +3307,10 @@ void Button::onRender(SDL_Renderer* renderer)
     SDL_RenderFillRect(renderer, &fc);
 
     //border
-    SDL_SetRenderDrawColor(renderer, enabled_ ? 100 : 60, enabled_ ? 100 : 60, enabled_ ? 100 : 60, 255);
+    Color bc = enabled_ ? borderColor_ : Color(borderColor_.r * 2 / 3,
+                                                borderColor_.g * 2 / 3,
+                                                borderColor_.b * 2 / 3);
+    SDL_SetRenderDrawColor(renderer, bc.r, bc.g, bc.b, bc.a);
     SDL_RenderRect(renderer, &fc);
 
     //text
@@ -3126,6 +3362,18 @@ void CheckBox::setCheckColor(Color color)
     markDirty();
 }
 
+void CheckBox::setBoxColor(Color color)
+{
+    boxColor_ = color;
+    markDirty();
+}
+
+void CheckBox::setBorderColor(Color color)
+{
+    borderColor_ = color;
+    markDirty();
+}
+
 void CheckBox::onRender(SDL_Renderer* renderer)
 {
     if (!visible_) return;
@@ -3134,11 +3382,16 @@ void CheckBox::onRender(SDL_Renderer* renderer)
     detail::ClipGuard clip(renderer, r.x, r.y, r.w, r.h);
 
     //box
-    int bc = enabled_ ? 255 : 180;
+    Color boxC = enabled_ ? boxColor_ : Color(boxColor_.r * 2 / 3,
+                                               boxColor_.g * 2 / 3,
+                                               boxColor_.b * 2 / 3);
     SDL_FRect box = { (float)r.x, (float)(r.y + (r.h - 16) / 2), 16.0f, 16.0f };
-    SDL_SetRenderDrawColor(renderer, bc, bc, bc, 255);
+    SDL_SetRenderDrawColor(renderer, boxC.r, boxC.g, boxC.b, boxC.a);
     SDL_RenderFillRect(renderer, &box);
-    SDL_SetRenderDrawColor(renderer, enabled_ ? 100 : 60, enabled_ ? 100 : 60, enabled_ ? 100 : 60, 255);
+    Color bc = enabled_ ? borderColor_ : Color(borderColor_.r * 2 / 3,
+                                                borderColor_.g * 2 / 3,
+                                                borderColor_.b * 2 / 3);
+    SDL_SetRenderDrawColor(renderer, bc.r, bc.g, bc.b, bc.a);
     SDL_RenderRect(renderer, &box);
 
     //check mark
@@ -3275,6 +3528,12 @@ void TextBox::setCursorColor(Color color)
 void TextBox::setSelectionColor(Color color)
 {
     selColor_ = color;
+    markDirty();
+}
+
+void TextBox::setBorderColor(Color color)
+{
+    borderColor_ = color;
     markDirty();
 }
 
@@ -3560,7 +3819,8 @@ void TextBox::onRender(SDL_Renderer* renderer)
     SDL_RenderFillRect(renderer, &fc);
 
     //border (no special focus color; the caret indicates focus)
-    SDL_SetRenderDrawColor(renderer, 140, 140, 140, 255);
+    SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g,
+                           borderColor_.b, borderColor_.a);
     SDL_RenderRect(renderer, &fc);
 
     int lineH = currentFont()->lineHeight();
@@ -3676,6 +3936,12 @@ void ListBox::onMouseWheel(int delta)
     markDirty();
 }
 
+void ListBox::setBackgroundColor(Color color) { bgColor_ = color; markDirty(); }
+void ListBox::setTextColor(Color color) { textColor_ = color; markDirty(); }
+void ListBox::setSelectionColor(Color color) { selColor_ = color; markDirty(); }
+void ListBox::setHoverColor(Color color) { hoverColor_ = color; markDirty(); }
+void ListBox::setBorderColor(Color color) { borderColor_ = color; markDirty(); }
+
 void ListBox::setSelectedIndex(int index)
 {
     if (index >= -1 && index < (int)items_.size())
@@ -3700,6 +3966,10 @@ void ListBox::onRender(SDL_Renderer* renderer)
     Rect r = absoluteRect();
     detail::ClipGuard clip(renderer, r.x, r.y, r.w, r.h);
 
+    SDL_FRect bg = { (float)r.x, (float)r.y, (float)r.w, (float)r.h };
+    SDL_SetRenderDrawColor(renderer, bgColor_.r, bgColor_.g, bgColor_.b, bgColor_.a);
+    SDL_RenderFillRect(renderer, &bg);
+
     for (int i = 0; i < (int)items_.size(); i++)
     {
         int y = r.y + i * itemH_ - scrollOffY_;
@@ -3709,13 +3979,13 @@ void ListBox::onRender(SDL_Renderer* renderer)
 
         if (i == selected_)
         {
-            SDL_SetRenderDrawColor(renderer, 40, 80, 140, 255);
+            SDL_SetRenderDrawColor(renderer, selColor_.r, selColor_.g, selColor_.b, selColor_.a);
             SDL_RenderFillRect(renderer, &row);
-            detail::drawText(renderer, items_[i].c_str(), r.x + 4, y + 2, Color::White);
+            detail::drawText(renderer, items_[i].c_str(), r.x + 4, y + 2, textColor_);
         }
         else if (i == hovered_)
         {
-            SDL_SetRenderDrawColor(renderer, 50, 50, 60, 255);
+            SDL_SetRenderDrawColor(renderer, hoverColor_.r, hoverColor_.g, hoverColor_.b, hoverColor_.a);
             SDL_RenderFillRect(renderer, &row);
             detail::drawText(renderer, items_[i].c_str(), r.x + 4, y + 2, textColor_);
         }
@@ -3724,6 +3994,9 @@ void ListBox::onRender(SDL_Renderer* renderer)
             detail::drawText(renderer, items_[i].c_str(), r.x + 4, y + 2, textColor_);
         }
     }
+
+    SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g, borderColor_.b, borderColor_.a);
+    SDL_RenderRect(renderer, &bg);
 
     for (auto& child : children_)
         child->onRender(renderer);
@@ -3778,6 +4051,13 @@ void ContextMenu::clear()
     markDirty();
 }
 
+void ContextMenu::setBackgroundColor(Color color) { bgColor_ = color; markDirty(); }
+void ContextMenu::setTextColor(Color color) { textColor_ = color; markDirty(); }
+void ContextMenu::setHoverColor(Color color) { hoverColor_ = color; markDirty(); }
+void ContextMenu::setBorderColor(Color color) { borderColor_ = color; markDirty(); }
+void ContextMenu::setDisabledTextColor(Color color) { disabledTextColor_ = color; markDirty(); }
+void ContextMenu::setSeparatorColor(Color color) { separatorColor_ = color; markDirty(); }
+
 void ContextMenu::show(int screenX, int screenY)
 {
     screenX_ = screenX;
@@ -3805,11 +4085,11 @@ void ContextMenu::onRender(SDL_Renderer* renderer)
     detail::ClipGuard clip(renderer, r.x, r.y, r.w, r.h);
 
     //background
-    SDL_SetRenderDrawColor(renderer, 35, 35, 40, 255);
+    SDL_SetRenderDrawColor(renderer, bgColor_.r, bgColor_.g, bgColor_.b, bgColor_.a);
     SDL_RenderFillRect(renderer, &fc);
 
     //border
-    SDL_SetRenderDrawColor(renderer, 80, 80, 80, 255);
+    SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g, borderColor_.b, borderColor_.a);
     SDL_RenderRect(renderer, &fc);
 
     for (int i = 0; i < (int)items_.size(); i++)
@@ -3818,19 +4098,21 @@ void ContextMenu::onRender(SDL_Renderer* renderer)
 
         if (items_[i].separator)
         {
-            SDL_SetRenderDrawColor(renderer, 60, 60, 60, 255);
+            SDL_SetRenderDrawColor(renderer, separatorColor_.r, separatorColor_.g,
+                                   separatorColor_.b, separatorColor_.a);
             SDL_RenderLine(renderer, r.x + 4, iy + 11, r.x + r.w - 4, iy + 11);
             continue;
         }
 
         if (i == hoveredIdx_ && items_[i].enabled)
         {
-            SDL_SetRenderDrawColor(renderer, 40, 80, 140, 255);
+            SDL_SetRenderDrawColor(renderer, hoverColor_.r, hoverColor_.g,
+                                   hoverColor_.b, hoverColor_.a);
             SDL_FRect sel = { (float)r.x, (float)iy, (float)r.w, 22.0f };
             SDL_RenderFillRect(renderer, &sel);
         }
 
-        Color tc = items_[i].enabled ? Color::White : Color(100, 100, 100);
+        Color tc = items_[i].enabled ? textColor_ : disabledTextColor_;
         detail::drawText(renderer, items_[i].text.c_str(), r.x + 8, iy + 3, tc);
     }
 
@@ -3900,6 +4182,16 @@ void Slider::setValue(float val)
     markDirty();
 }
 
+void Slider::setTrackColor(Color color) { trackColor_ = color; markDirty(); }
+void Slider::setFillColor(Color color) { fillColor_ = color; markDirty(); }
+void Slider::setThumbColor(Color normal, Color hover)
+{
+    thumbColor_ = normal;
+    thumbHoverColor_ = hover;
+    markDirty();
+}
+void Slider::setBorderColor(Color color) { borderColor_ = color; markDirty(); }
+
 void Slider::onRender(SDL_Renderer* renderer)
 {
     if (!visible_) return;
@@ -3909,7 +4201,8 @@ void Slider::onRender(SDL_Renderer* renderer)
 
     //track
     int trackY = r.y + r.h / 2 - 2;
-    SDL_SetRenderDrawColor(renderer, 60, 60, 60, 255);
+    SDL_SetRenderDrawColor(renderer, trackColor_.r, trackColor_.g,
+                           trackColor_.b, trackColor_.a);
     SDL_FRect track = { (float)(r.x + 4), (float)trackY, (float)(r.w - 8), 4.0f };
     SDL_RenderFillRect(renderer, &track);
 
@@ -3917,20 +4210,24 @@ void Slider::onRender(SDL_Renderer* renderer)
     float range = max_ - min_;
     float ratio = range != 0.f ? (value_ - min_) / range : 0.f;
     int fillW = (int)((r.w - 8) * ratio);
-    int tc = enabled_ ? 80 : 60;
-    SDL_SetRenderDrawColor(renderer, tc, enabled_ ? 140 : 100, enabled_ ? 200 : 120, 255);
+    Color fc = fillColor_;
+    if (!enabled_) { fc.r = fc.r * 3 / 4; fc.g = fc.g * 3 / 4; fc.b = fc.b * 3 / 4; }
+    SDL_SetRenderDrawColor(renderer, fc.r, fc.g, fc.b, fc.a);
     SDL_FRect fill = { (float)(r.x + 4), (float)trackY, (float)fillW, 4.0f };
     SDL_RenderFillRect(renderer, &fill);
 
     //thumb
     int thumbX = r.x + 4 + (int)((r.w - 16) * ratio);
     int thumbY = r.y + r.h / 2 - 6;
-    int tb = dragging_ ? 180 : 140;
-    if (!enabled_) tb = 80;
-    SDL_SetRenderDrawColor(renderer, tb, tb, tb, 255);
+    Color th = (dragging_ ? thumbHoverColor_ : thumbColor_);
+    if (!enabled_) { th.r = th.r * 2 / 3; th.g = th.g * 2 / 3; th.b = th.b * 2 / 3; }
+    SDL_SetRenderDrawColor(renderer, th.r, th.g, th.b, th.a);
     SDL_FRect thumb = { (float)thumbX, (float)thumbY, 12.0f, 12.0f };
     SDL_RenderFillRect(renderer, &thumb);
-    SDL_SetRenderDrawColor(renderer, enabled_ ? 100 : 60, enabled_ ? 100 : 60, enabled_ ? 100 : 60, 255);
+    Color bc = enabled_ ? borderColor_ : Color(borderColor_.r * 2 / 3,
+                                                borderColor_.g * 2 / 3,
+                                                borderColor_.b * 2 / 3);
+    SDL_SetRenderDrawColor(renderer, bc.r, bc.g, bc.b, bc.a);
     SDL_RenderRect(renderer, &thumb);
 
     for (auto& child : children_)
@@ -3986,6 +4283,13 @@ void DropDown::clear()
     markDirty();
 }
 
+void DropDown::setBackgroundColor(Color color) { bgColor_ = color; markDirty(); }
+void DropDown::setTextColor(Color color) { textColor_ = color; markDirty(); }
+void DropDown::setBorderColor(Color color) { borderColor_ = color; markDirty(); }
+void DropDown::setArrowColor(Color color) { arrowColor_ = color; markDirty(); }
+void DropDown::setPopupColor(Color color) { popupColor_ = color; markDirty(); }
+void DropDown::setSelectionColor(Color color) { selectionColor_ = color; markDirty(); }
+
 void DropDown::setSelectedIndex(int index)
 {
     if (index >= -1 && index < (int)items_.size())
@@ -4019,17 +4323,17 @@ void DropDown::onRender(SDL_Renderer* renderer)
     {
         detail::ClipGuard btnClip(renderer, r.x, r.y, r.w, r.h);
         SDL_FRect fbc = { (float)r.x, (float)r.y, (float)r.w, (float)r.h };
-        SDL_SetRenderDrawColor(renderer, 50, 50, 50, 255);
+        SDL_SetRenderDrawColor(renderer, bgColor_.r, bgColor_.g, bgColor_.b, bgColor_.a);
         SDL_RenderFillRect(renderer, &fbc);
-        SDL_SetRenderDrawColor(renderer, 80, 80, 80, 255);
+        SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g, borderColor_.b, borderColor_.a);
         SDL_RenderRect(renderer, &fbc);
 
         //text
         if (selected_ >= 0 && selected_ < (int)items_.size())
-            detail::drawText(renderer, items_[selected_].c_str(), r.x + 4, r.y + 4, Color::White);
+            detail::drawText(renderer, items_[selected_].c_str(), r.x + 4, r.y + 4, textColor_);
 
         //▼ arrow
-        detail::drawText(renderer, expanded_ ? "▲" : "▼", r.x + r.w - 14, r.y + 4, Color::Gray);
+        detail::drawText(renderer, expanded_ ? "▲" : "▼", r.x + r.w - 14, r.y + 4, arrowColor_);
     }
 
     //list
@@ -4039,7 +4343,8 @@ void DropDown::onRender(SDL_Renderer* renderer)
         int lh = (int)items_.size() * 20;
         detail::ClipGuard listClip(renderer, r.x, ly, r.w, lh);
 
-        SDL_SetRenderDrawColor(renderer, 30, 30, 35, 255);
+        SDL_SetRenderDrawColor(renderer, popupColor_.r, popupColor_.g,
+                               popupColor_.b, popupColor_.a);
         SDL_FRect listBg = { (float)r.x, (float)ly, (float)r.w, (float)lh };
         SDL_RenderFillRect(renderer, &listBg);
 
@@ -4048,14 +4353,16 @@ void DropDown::onRender(SDL_Renderer* renderer)
             int iy = ly + i * 20;
             if (i == selected_)
             {
-                SDL_SetRenderDrawColor(renderer, 40, 80, 140, 255);
+                SDL_SetRenderDrawColor(renderer, selectionColor_.r, selectionColor_.g,
+                                       selectionColor_.b, selectionColor_.a);
                 SDL_FRect sel = { (float)r.x, (float)iy, (float)r.w, 20.0f };
                 SDL_RenderFillRect(renderer, &sel);
             }
-            detail::drawText(renderer, items_[i].c_str(), r.x + 4, iy + 2, Color::White);
+            detail::drawText(renderer, items_[i].c_str(), r.x + 4, iy + 2, textColor_);
         }
 
-        SDL_SetRenderDrawColor(renderer, 80, 80, 80, 255);
+        SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g,
+                               borderColor_.b, borderColor_.a);
         SDL_RenderRect(renderer, &listBg);
     }
 
@@ -4117,6 +4424,14 @@ ComboBox::ComboBox(Widget* parent)
 
 void ComboBox::addItem(const std::string& item) { items_.push_back(item); markDirty(); }
 void ComboBox::clear() { items_.clear(); text_.clear(); selected_ = -1; expanded_ = false; listH_ = 0; markDirty(); }
+
+void ComboBox::setBackgroundColor(Color color) { bgColor_ = color; markDirty(); }
+void ComboBox::setTextColor(Color color) { textColor_ = color; markDirty(); }
+void ComboBox::setBorderColor(Color color) { borderColor_ = color; markDirty(); }
+void ComboBox::setButtonColor(Color color) { buttonColor_ = color; markDirty(); }
+void ComboBox::setArrowColor(Color color) { arrowColor_ = color; markDirty(); }
+void ComboBox::setPopupColor(Color color) { popupColor_ = color; markDirty(); }
+void ComboBox::setSelectionColor(Color color) { selectionColor_ = color; markDirty(); }
 
 void ComboBox::setSelectedIndex(int index)
 {
@@ -4215,19 +4530,20 @@ void ComboBox::onRender(SDL_Renderer* renderer)
     {
         detail::ClipGuard inpClip(renderer, r.x, r.y, r.w - 20, r.h);
         SDL_FRect fic = { (float)r.x, (float)r.y, (float)(r.w - 20), (float)r.h };
-        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+        SDL_SetRenderDrawColor(renderer, bgColor_.r, bgColor_.g, bgColor_.b, bgColor_.a);
         SDL_RenderFillRect(renderer, &fic);
 
         int tx = r.x + 4;
         int ty = r.y + (r.h - currentFont()->lineHeight()) / 2;
-        detail::drawText(renderer, text_.c_str(), tx, ty, Color::Black);
+        detail::drawText(renderer, text_.c_str(), tx, ty, textColor_);
 
         //cursor
         uint32_t tick = SDL_GetTicks();
         if (focused_ && (tick / 500) % 2 == 0)
         {
             int cx = tx + detail::textWidthTo(text_.c_str(), cursorPos_);
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_SetRenderDrawColor(renderer, textColor_.r, textColor_.g,
+                                   textColor_.b, textColor_.a);
             SDL_RenderLine(renderer, cx, r.y + 3, cx, r.y + r.h - 3);
         }
     }
@@ -4236,14 +4552,16 @@ void ComboBox::onRender(SDL_Renderer* renderer)
     {
         detail::ClipGuard btnClip(renderer, r.x + r.w - 20, r.y, 20, r.h);
         SDL_FRect fbc = { (float)(r.x + r.w - 20), (float)r.y, 20.0f, (float)r.h };
-        SDL_SetRenderDrawColor(renderer, 60, 60, 60, 255);
+        SDL_SetRenderDrawColor(renderer, buttonColor_.r, buttonColor_.g,
+                               buttonColor_.b, buttonColor_.a);
         SDL_RenderFillRect(renderer, &fbc);
-        detail::drawText(renderer, "▼", r.x + r.w - 14, r.y + 4, Color::Gray);
+        detail::drawText(renderer, "▼", r.x + r.w - 14, r.y + 4, arrowColor_);
     }
 
     //border
     SDL_FRect border = { (float)r.x, (float)r.y, (float)r.w, (float)r.h };
-    SDL_SetRenderDrawColor(renderer, 140, 140, 140, 255);
+    SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g,
+                           borderColor_.b, borderColor_.a);
     SDL_RenderRect(renderer, &border);
 
     //list
@@ -4253,20 +4571,23 @@ void ComboBox::onRender(SDL_Renderer* renderer)
         int lh = (int)items_.size() * 20;
         detail::ClipGuard listClip(renderer, r.x, ly, r.w, lh);
         SDL_FRect flc = { (float)r.x, (float)ly, (float)r.w, (float)lh };
-        SDL_SetRenderDrawColor(renderer, 30, 30, 35, 255);
+        SDL_SetRenderDrawColor(renderer, popupColor_.r, popupColor_.g,
+                               popupColor_.b, popupColor_.a);
         SDL_RenderFillRect(renderer, &flc);
         for (int i = 0; i < (int)items_.size(); i++)
         {
             int iy = ly + i * 20;
             if (i == selected_)
             {
-                SDL_SetRenderDrawColor(renderer, 40, 80, 140, 255);
+                SDL_SetRenderDrawColor(renderer, selectionColor_.r, selectionColor_.g,
+                                       selectionColor_.b, selectionColor_.a);
                 SDL_FRect sel = { (float)r.x, (float)iy, (float)r.w, 20.0f };
                 SDL_RenderFillRect(renderer, &sel);
             }
-            detail::drawText(renderer, items_[i].c_str(), r.x + 4, iy + 2, Color::White);
+            detail::drawText(renderer, items_[i].c_str(), r.x + 4, iy + 2, textColor_);
         }
-        SDL_SetRenderDrawColor(renderer, 80, 80, 80, 255);
+        SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g,
+                               borderColor_.b, borderColor_.a);
         SDL_RenderRect(renderer, &flc);
     }
 
@@ -4376,6 +4697,9 @@ void TextArea::setText(const std::string& text)
 }
 
 void TextArea::setTextColor(Color color) { textColor_ = color; markDirty(); }
+void TextArea::setBackgroundColor(Color color) { bgColor_ = color; markDirty(); }
+void TextArea::setCursorColor(Color color) { cursorColor_ = color; markDirty(); }
+void TextArea::setBorderColor(Color color) { borderColor_ = color; markDirty(); }
 void TextArea::setReadOnly(bool ro) { readOnly_ = ro; markDirty(); }
 void TextArea::setSelectionColor(Color color) { selColor_ = color; markDirty(); }
 
@@ -4851,6 +5175,11 @@ void TextArea::onRender(SDL_Renderer* renderer)
     SDL_SetRenderDrawColor(renderer, bgColor_.r, bgColor_.g, bgColor_.b, bgColor_.a);
     SDL_RenderFillRect(renderer, &fc);
 
+    //border
+    SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g,
+                           borderColor_.b, borderColor_.a);
+    SDL_RenderRect(renderer, &fc);
+
     auto lines = splitLines();
     int maxW = 0;
     int lineH = std::max(1, currentFont()->lineHeight());
@@ -4902,7 +5231,8 @@ void TextArea::onRender(SDL_Renderer* renderer)
             int cy = r.y + cursorLine_ * lineH - scrollY_;
             if (cy + lineH >= r.y && cy <= r.y + r.h)
             {
-                SDL_SetRenderDrawColor(renderer, 200, 200, 200, 255);
+                SDL_SetRenderDrawColor(renderer, cursorColor_.r, cursorColor_.g,
+                                       cursorColor_.b, cursorColor_.a);
                 SDL_RenderLine(renderer, cx, cy, cx, cy + lineH);
             }
         }
@@ -4990,6 +5320,13 @@ void ScrollView::setContentSize(int w, int h)
     markDirty();
 }
 
+void ScrollView::setScrollbarColors(Color track, Color thumb)
+{
+    scrollTrackColor_ = track;
+    scrollThumbColor_ = thumb;
+    markDirty();
+}
+
 void ScrollView::setScrollOffset(int x, int y)
 {
     int maxX = std::max(0, contentW_ - width_);
@@ -5031,7 +5368,8 @@ void ScrollView::renderScrollbars(SDL_Renderer* renderer)
         int sbH  = r.h;
 
         //track
-        SDL_SetRenderDrawColor(renderer, 40, 40, 40, 255);
+        SDL_SetRenderDrawColor(renderer, scrollTrackColor_.r, scrollTrackColor_.g,
+                               scrollTrackColor_.b, scrollTrackColor_.a);
         SDL_FRect track = { (float)sbX, (float)sbY, (float)sbW, (float)sbH };
         SDL_RenderFillRect(renderer, &track);
 
@@ -5040,7 +5378,8 @@ void ScrollView::renderScrollbars(SDL_Renderer* renderer)
         int thumbH  = (int)(sbH * ratio);
         if (thumbH < 10) thumbH = 10;
         int thumbY  = sbY + (int)(scrollY_ * ratio);
-        SDL_SetRenderDrawColor(renderer, 100, 100, 100, 255);
+        SDL_SetRenderDrawColor(renderer, scrollThumbColor_.r, scrollThumbColor_.g,
+                               scrollThumbColor_.b, scrollThumbColor_.a);
         SDL_FRect thumb = { (float)(sbX + 1), (float)thumbY, (float)(sbW - 2), (float)thumbH };
         SDL_RenderFillRect(renderer, &thumb);
     }
@@ -5056,7 +5395,8 @@ void ScrollView::renderScrollbars(SDL_Renderer* renderer)
         if (showVScroll_ && contentH_ > r.h)
             sbW -= 10;  //leave room for vsb
 
-        SDL_SetRenderDrawColor(renderer, 40, 40, 40, 255);
+        SDL_SetRenderDrawColor(renderer, scrollTrackColor_.r, scrollTrackColor_.g,
+                               scrollTrackColor_.b, scrollTrackColor_.a);
         SDL_FRect track = { (float)sbX, (float)sbY, (float)sbW, (float)sbH };
         SDL_RenderFillRect(renderer, &track);
 
@@ -5064,7 +5404,8 @@ void ScrollView::renderScrollbars(SDL_Renderer* renderer)
         int thumbW  = (int)(sbW * ratio);
         if (thumbW < 10) thumbW = 10;
         int thumbX  = sbX + (int)(scrollX_ * ratio);
-        SDL_SetRenderDrawColor(renderer, 100, 100, 100, 255);
+        SDL_SetRenderDrawColor(renderer, scrollThumbColor_.r, scrollThumbColor_.g,
+                               scrollThumbColor_.b, scrollThumbColor_.a);
         SDL_FRect thumb = { (float)thumbX, (float)(sbY + 1), (float)thumbW, (float)(sbH - 2) };
         SDL_RenderFillRect(renderer, &thumb);
     }
@@ -5442,6 +5783,47 @@ void Window::setBackgroundColor(Color color)
     redraw_ = true;
 }
 
+void Window::setTitleBarColor(Color color)
+{
+    titleBarColor_ = color;
+    redraw_ = true;
+}
+
+void Window::setTitleTextColor(Color color)
+{
+    titleTextColor_ = color;
+    redraw_ = true;
+}
+
+void Window::setTitleButtonColors(Color normal, Color hover)
+{
+    titleButtonColor_ = normal;
+    titleButtonHoverColor_ = hover;
+    redraw_ = true;
+}
+
+void Window::setTitleCloseColor(Color color)
+{
+    titleCloseColor_ = color;
+    redraw_ = true;
+}
+
+void Window::setTheme(const Theme& theme)
+{
+    theme_ = theme;
+    setBackgroundColor(theme.windowBg);
+    setTitleBarColor(theme.titleBarBg);
+    setTitleTextColor(theme.titleText);
+    setTitleButtonColors(theme.titleButton, theme.titleButtonHover);
+    setTitleCloseColor(theme.titleCloseHover);
+    applyTheme(*root_, theme);
+    if (contextMenu_)
+        applyTheme(*contextMenu_, theme);
+    if (messageBox_)
+        messageBox_->applyTheme(theme);
+    requestRedraw();
+}
+
 void Window::render()
 {
     if (!sdlWindow_ || !renderer_ || !root_)
@@ -5484,24 +5866,30 @@ void Window::render()
         int clsX = clientWidth_ - bsz;
 
         SDL_FRect tb = { 0, 0, (float)clientWidth_, (float)bh };
-        SDL_SetRenderDrawColor(renderer_, 50, 50, 50, 255);
+        SDL_SetRenderDrawColor(renderer_, titleBarColor_.r, titleBarColor_.g,
+                               titleBarColor_.b, titleBarColor_.a);
         SDL_RenderFillRect(renderer_, &tb);
         detail::drawText(renderer_, title_.c_str(), 6,
-                         (bh - currentFont()->lineHeight()) / 2, Color::White);
+                         (bh - currentFont()->lineHeight()) / 2, titleTextColor_);
 
         //--- minimize [_] ---
         SDL_FRect minBtn = { (float)minX, 0, (float)bsz, (float)bsz };
         if (hoveredBtn_ == 1)
         {
-            SDL_SetRenderDrawColor(renderer_, 80, 80, 80, 255);
+            SDL_SetRenderDrawColor(renderer_, titleButtonHoverColor_.r,
+                                   titleButtonHoverColor_.g, titleButtonHoverColor_.b,
+                                   titleButtonHoverColor_.a);
             SDL_RenderFillRect(renderer_, &minBtn);
-            SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 255);
+            SDL_SetRenderDrawColor(renderer_, titleTextColor_.r, titleTextColor_.g,
+                                   titleTextColor_.b, titleTextColor_.a);
         }
         else
         {
-            SDL_SetRenderDrawColor(renderer_, 50, 50, 50, 255);
+            SDL_SetRenderDrawColor(renderer_, titleButtonColor_.r, titleButtonColor_.g,
+                                   titleButtonColor_.b, titleButtonColor_.a);
             SDL_RenderFillRect(renderer_, &minBtn);
-            SDL_SetRenderDrawColor(renderer_, 180, 180, 180, 255);
+            SDL_SetRenderDrawColor(renderer_, titleTextColor_.r, titleTextColor_.g,
+                                   titleTextColor_.b, titleTextColor_.a);
         }
         SDL_RenderLine(renderer_, minX + 8, bh - 8, minX + bsz - 8, bh - 8);
 
@@ -5511,15 +5899,20 @@ void Window::render()
             SDL_FRect maxBtn = { (float)maxX, 0, (float)bsz, (float)bsz };
             if (hoveredBtn_ == 2)
             {
-                SDL_SetRenderDrawColor(renderer_, 80, 80, 80, 255);
+                SDL_SetRenderDrawColor(renderer_, titleButtonHoverColor_.r,
+                                       titleButtonHoverColor_.g, titleButtonHoverColor_.b,
+                                       titleButtonHoverColor_.a);
                 SDL_RenderFillRect(renderer_, &maxBtn);
-                SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 255);
+                SDL_SetRenderDrawColor(renderer_, titleTextColor_.r, titleTextColor_.g,
+                                       titleTextColor_.b, titleTextColor_.a);
             }
             else
             {
-                SDL_SetRenderDrawColor(renderer_, 50, 50, 50, 255);
+                SDL_SetRenderDrawColor(renderer_, titleButtonColor_.r, titleButtonColor_.g,
+                                       titleButtonColor_.b, titleButtonColor_.a);
                 SDL_RenderFillRect(renderer_, &maxBtn);
-                SDL_SetRenderDrawColor(renderer_, 180, 180, 180, 255);
+                SDL_SetRenderDrawColor(renderer_, titleTextColor_.r, titleTextColor_.g,
+                                       titleTextColor_.b, titleTextColor_.a);
             }
             if (maximized_)
             {
@@ -5539,15 +5932,18 @@ void Window::render()
         SDL_FRect clsBtn = { (float)clsX, 0, (float)bsz, (float)bsz };
         if (hoveredBtn_ == 3)
         {
-            SDL_SetRenderDrawColor(renderer_, 180, 30, 30, 255);
+            SDL_SetRenderDrawColor(renderer_, titleCloseColor_.r, titleCloseColor_.g,
+                                   titleCloseColor_.b, titleCloseColor_.a);
             SDL_RenderFillRect(renderer_, &clsBtn);
             SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 255);
         }
         else
         {
-            SDL_SetRenderDrawColor(renderer_, 50, 50, 50, 255);
+            SDL_SetRenderDrawColor(renderer_, titleButtonColor_.r, titleButtonColor_.g,
+                                   titleButtonColor_.b, titleButtonColor_.a);
             SDL_RenderFillRect(renderer_, &clsBtn);
-            SDL_SetRenderDrawColor(renderer_, 180, 180, 180, 255);
+            SDL_SetRenderDrawColor(renderer_, titleTextColor_.r, titleTextColor_.g,
+                                   titleTextColor_.b, titleTextColor_.a);
         }
         SDL_RenderLine(renderer_, clsX + 8, 8, clsX + bsz - 8, bsz - 8);
         SDL_RenderLine(renderer_, clsX + bsz - 8, 8, clsX + 8, bsz - 8);
@@ -5594,6 +5990,7 @@ void Window::showMessageBox(const char* title, const char* message,
 {
     if (!messageBox_)
         messageBox_ = std::unique_ptr<MessageBox>(new MessageBox);
+    messageBox_->applyTheme(theme_);
     messageBox_->show(title, message, type, buttons, std::move(onResult),
                       clientWidth_, clientHeight_);
     redraw_ = true;
@@ -5727,6 +6124,199 @@ void Application::updateTextInputArea(Widget* widget)
 
     SDL_Rect area = { caret.x, caret.y, caret.w, caret.h };
     SDL_SetTextInputArea(win->handle(), &area, 0);
+}
+
+Theme Theme::light()
+{
+    Theme t;
+    t.windowBg = Color(245, 245, 245);
+    t.text = Color(30, 30, 30);
+    t.disabledText = Color(150, 150, 150);
+    t.mutedText = Color(110, 110, 110);
+    t.border = Color(190, 190, 190);
+
+    t.buttonBg = Color(235, 235, 235);
+    t.buttonHover = Color(248, 248, 248);
+    t.buttonPressed = Color(215, 215, 215);
+    t.buttonText = Color(30, 30, 30);
+    t.buttonBorder = Color(180, 180, 180);
+
+    t.inputBg = Color(255, 255, 255);
+    t.inputText = Color(25, 25, 25);
+    t.inputPlaceholder = Color(150, 150, 150);
+    t.inputBorder = Color(180, 180, 180);
+    t.inputCursor = Color(20, 20, 20);
+    t.inputSelection = Color(180, 210, 245);
+
+    t.panelBg = Color(250, 250, 250);
+    t.panelBorder = Color(200, 200, 200);
+    t.rowHover = Color(232, 238, 246);
+    t.rowSelected = Color(190, 215, 245);
+    t.rowSelectedText = Color(20, 20, 20);
+
+    t.scrollTrack = Color(235, 235, 235);
+    t.scrollThumb = Color(190, 190, 190);
+
+    t.menuBarBg = Color(238, 238, 238);
+    t.menuHover = Color(220, 226, 235);
+    t.menuText = Color(30, 30, 30);
+    t.menuDisabled = Color(150, 150, 150);
+    t.menuShortcut = Color(120, 120, 120);
+    t.menuPopupBg = Color(255, 255, 255);
+    t.menuItemHover = Color(205, 225, 248);
+    t.menuAccent = Color(70, 130, 210);
+
+    t.textAreaBg = Color(255, 255, 255);
+    t.textAreaText = Color(30, 30, 30);
+    t.textAreaCursor = Color(30, 30, 30);
+    t.textAreaSelection = Color(190, 215, 245);
+
+    t.sliderTrack = Color(210, 210, 210);
+    t.sliderFill = Color(70, 130, 210);
+    t.sliderThumb = Color(250, 250, 250);
+    t.sliderThumbHover = Color(255, 255, 255);
+    t.sliderBorder = Color(150, 150, 150);
+
+    t.titleBarBg = Color(235, 235, 235);
+    t.titleText = Color(30, 30, 30);
+    t.titleButton = Color(235, 235, 235);
+    t.titleButtonHover = Color(215, 215, 215);
+    t.titleCloseHover = Color(220, 60, 60);
+
+    t.overlay = Color(0, 0, 0, 90);
+    t.dialogBg = Color(255, 255, 255);
+    t.dialogBorder = Color(180, 180, 180);
+    t.dialogTitleBg = Color(240, 240, 240);
+    t.dialogTitleText = Color(30, 30, 30);
+    t.dialogText = Color(30, 30, 30);
+    t.dialogButton = Color(238, 238, 238);
+    t.dialogButtonHover = Color(218, 225, 235);
+    t.dialogButtonBorder = Color(180, 180, 180);
+    t.dialogButtonText = Color(30, 30, 30);
+
+    t.checkboxBox = Color(255, 255, 255);
+    t.checkboxBorder = Color(170, 170, 170);
+    t.checkboxCheck = Color(0, 140, 70);
+    t.divider = Color(210, 210, 210);
+    return t;
+}
+
+void applyTheme(Widget& root, const Theme& theme)
+{
+    if (auto* l = dynamic_cast<Label*>(&root))
+    {
+        l->setTextColor(theme.text);
+    }
+    else if (auto* b = dynamic_cast<Button*>(&root))
+    {
+        b->setTextColor(theme.buttonText);
+        b->setBgColor(theme.buttonBg, theme.buttonHover, theme.buttonPressed);
+        b->setBorderColor(theme.buttonBorder);
+    }
+    else if (auto* c = dynamic_cast<CheckBox*>(&root))
+    {
+        c->setTextColor(theme.text);
+        c->setCheckColor(theme.checkboxCheck);
+        c->setBoxColor(theme.checkboxBox);
+        c->setBorderColor(theme.checkboxBorder);
+    }
+    else if (auto* tb = dynamic_cast<TextBox*>(&root))
+    {
+        tb->setBackgroundColor(theme.inputBg);
+        tb->setTextColor(theme.inputText);
+        tb->setPlaceholderColor(theme.inputPlaceholder);
+        tb->setCursorColor(theme.inputCursor);
+        tb->setSelectionColor(theme.inputSelection);
+        tb->setBorderColor(theme.inputBorder);
+    }
+    else if (auto* lb = dynamic_cast<ListBox*>(&root))
+    {
+        lb->setBackgroundColor(theme.panelBg);
+        lb->setTextColor(theme.text);
+        lb->setSelectionColor(theme.rowSelected);
+        lb->setHoverColor(theme.rowHover);
+        lb->setBorderColor(theme.panelBorder);
+    }
+    else if (auto* mb = dynamic_cast<MenuBar*>(&root))
+    {
+        mb->setBackgroundColor(theme.menuBarBg);
+        mb->setTextColor(theme.menuText);
+        mb->setHoverColor(theme.menuHover);
+        mb->setPopupColor(theme.menuPopupBg);
+        mb->setBorderColor(theme.panelBorder);
+        mb->setItemHoverColor(theme.menuItemHover);
+        mb->setDisabledTextColor(theme.menuDisabled);
+        mb->setShortcutColor(theme.menuShortcut);
+        mb->setAccentColor(theme.menuAccent);
+    }
+    else if (auto* cm = dynamic_cast<ContextMenu*>(&root))
+    {
+        cm->setBackgroundColor(theme.menuPopupBg);
+        cm->setTextColor(theme.menuText);
+        cm->setHoverColor(theme.menuItemHover);
+        cm->setBorderColor(theme.panelBorder);
+        cm->setDisabledTextColor(theme.menuDisabled);
+        cm->setSeparatorColor(theme.panelBorder);
+    }
+    else if (auto* sl = dynamic_cast<Slider*>(&root))
+    {
+        sl->setTrackColor(theme.sliderTrack);
+        sl->setFillColor(theme.sliderFill);
+        sl->setThumbColor(theme.sliderThumb, theme.sliderThumbHover);
+        sl->setBorderColor(theme.sliderBorder);
+    }
+    else if (auto* dd = dynamic_cast<DropDown*>(&root))
+    {
+        dd->setBackgroundColor(theme.panelBg);
+        dd->setTextColor(theme.text);
+        dd->setBorderColor(theme.panelBorder);
+        dd->setArrowColor(theme.mutedText);
+        dd->setPopupColor(theme.menuPopupBg);
+        dd->setSelectionColor(theme.rowSelected);
+    }
+    else if (auto* cb = dynamic_cast<ComboBox*>(&root))
+    {
+        cb->setBackgroundColor(theme.inputBg);
+        cb->setTextColor(theme.inputText);
+        cb->setBorderColor(theme.inputBorder);
+        cb->setButtonColor(theme.buttonBg);
+        cb->setArrowColor(theme.mutedText);
+        cb->setPopupColor(theme.menuPopupBg);
+        cb->setSelectionColor(theme.rowSelected);
+    }
+    else if (auto* ta = dynamic_cast<TextArea*>(&root))
+    {
+        ta->setBackgroundColor(theme.textAreaBg);
+        ta->setTextColor(theme.textAreaText);
+        ta->setCursorColor(theme.textAreaCursor);
+        ta->setSelectionColor(theme.textAreaSelection);
+        ta->setBorderColor(theme.panelBorder);
+    }
+
+    if (auto* sv = dynamic_cast<ScrollView*>(&root))
+        sv->setScrollbarColors(theme.scrollTrack, theme.scrollThumb);
+
+    if (auto* sp = dynamic_cast<SplitView*>(&root))
+        sp->setDividerColor(theme.divider);
+
+    for (auto& child : root.children())
+        applyTheme(*child, theme);
+}
+
+void applyTheme(Window& window, const Theme& theme)
+{
+    window.setTheme(theme);
+}
+
+void Application::setTheme(const Theme& theme)
+{
+    for (auto& win : windows_)
+        if (win) win->setTheme(theme);
+}
+
+void applyTheme(Application& app, const Theme& theme)
+{
+    app.setTheme(theme);
 }
 
 void Application::run()
@@ -6309,7 +6899,10 @@ void Application::handleMouseEvent(const SDL_Event& ev)
         if (pressedWidget_ == target && me.button == SDL_BUTTON_RIGHT)
         {
             if (!win->contextMenu_)
+            {
                 win->contextMenu_ = std::unique_ptr<ContextMenu>(new ContextMenu(nullptr));
+                applyTheme(*win->contextMenu_, win->theme_);
+            }
             win->contextMenu_->clear();
             if (target->onContextMenu)
                 target->onContextMenu(me, *win->contextMenu_);
@@ -6754,6 +7347,37 @@ void MessageBox::dismiss()
     pressedBtnIdx_ = -1;
 }
 
+void MessageBox::setOverlayColor(Color color) { overlayColor_ = color; }
+void MessageBox::setBackgroundColor(Color color) { bgColor_ = color; }
+void MessageBox::setBorderColor(Color color) { borderColor_ = color; }
+void MessageBox::setTextColor(Color color) { textColor_ = color; }
+void MessageBox::setTitleColors(Color background, Color text)
+{
+    titleBgColor_ = background;
+    titleTextColor_ = text;
+}
+void MessageBox::setButtonColors(Color normal, Color hover, Color border, Color text)
+{
+    buttonBgColor_ = normal;
+    buttonHoverColor_ = hover;
+    buttonBorderColor_ = border;
+    buttonTextColor_ = text;
+}
+
+void MessageBox::applyTheme(const Theme& theme)
+{
+    overlayColor_ = theme.overlay;
+    bgColor_ = theme.dialogBg;
+    borderColor_ = theme.dialogBorder;
+    textColor_ = theme.dialogText;
+    titleBgColor_ = theme.dialogTitleBg;
+    titleTextColor_ = theme.dialogTitleText;
+    buttonBgColor_ = theme.dialogButton;
+    buttonHoverColor_ = theme.dialogButtonHover;
+    buttonBorderColor_ = theme.dialogButtonBorder;
+    buttonTextColor_ = theme.dialogButtonText;
+}
+
 int MessageBox::hitTestButton(int mx, int my) const
 {
     if (!active_) return -1;
@@ -6780,25 +7404,29 @@ void MessageBox::renderOverlay(SDL_Renderer* renderer, int windowW, int windowH)
     //semi-transparent overlay
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_FRect ov = { 0, 0, (float)windowW, (float)windowH };
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 180);
+    SDL_SetRenderDrawColor(renderer, overlayColor_.r, overlayColor_.g,
+                           overlayColor_.b, overlayColor_.a);
     SDL_RenderFillRect(renderer, &ov);
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
 
     //dialog background
     SDL_FRect dlg = { (float)dlgX_, (float)dlgY_, (float)dlgW_, (float)dlgH_ };
-    SDL_SetRenderDrawColor(renderer, 45, 45, 45, 255);
+    SDL_SetRenderDrawColor(renderer, bgColor_.r, bgColor_.g, bgColor_.b, bgColor_.a);
     SDL_RenderFillRect(renderer, &dlg);
-    SDL_SetRenderDrawColor(renderer, 70, 70, 70, 255);
+    SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g,
+                           borderColor_.b, borderColor_.a);
     SDL_RenderRect(renderer, &dlg);
 
     //title bar
     SDL_FRect tb = { (float)dlgX_, (float)dlgY_, (float)dlgW_, 26.0f };
-    SDL_SetRenderDrawColor(renderer, 55, 55, 55, 255);
+    SDL_SetRenderDrawColor(renderer, titleBgColor_.r, titleBgColor_.g,
+                           titleBgColor_.b, titleBgColor_.a);
     SDL_RenderFillRect(renderer, &tb);
-    detail::drawText(renderer, title_.c_str(), dlgX_ + 8, dlgY_ + 5, Color::White);
+    detail::drawText(renderer, title_.c_str(), dlgX_ + 8, dlgY_ + 5, titleTextColor_);
 
     //separator
-    SDL_SetRenderDrawColor(renderer, 70, 70, 70, 255);
+    SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g,
+                           borderColor_.b, borderColor_.a);
     SDL_RenderLine(renderer, dlgX_, dlgY_ + 26, dlgX_ + dlgW_ - 1, dlgY_ + 26);
 
     //icon
@@ -6830,7 +7458,7 @@ void MessageBox::renderOverlay(SDL_Renderer* renderer, int windowW, int windowH)
     for (const auto& line : lines)
     {
         if (!line.empty())
-            detail::drawText(renderer, line.c_str(), msgX, curY, Color::White);
+            detail::drawText(renderer, line.c_str(), msgX, curY, textColor_);
         curY += lineH;
     }
 
@@ -6841,14 +7469,16 @@ void MessageBox::renderOverlay(SDL_Renderer* renderer, int windowW, int windowH)
         const SDL_FRect& r = bi.rect;
  
         bool hover = (i == hoveredBtn_);
-        SDL_SetRenderDrawColor(renderer, hover ? 85 : 60, hover ? 85 : 60, hover ? 85 : 60, 255);
+        Color bbg = hover ? buttonHoverColor_ : buttonBgColor_;
+        SDL_SetRenderDrawColor(renderer, bbg.r, bbg.g, bbg.b, bbg.a);
         SDL_RenderFillRect(renderer, &r);
-        SDL_SetRenderDrawColor(renderer, 100, 100, 100, 255);
+        SDL_SetRenderDrawColor(renderer, buttonBorderColor_.r, buttonBorderColor_.g,
+                               buttonBorderColor_.b, buttonBorderColor_.a);
         SDL_RenderRect(renderer, &r);
 
         int tx = r.x + (r.w - detail::textWidth(bi.text.c_str())) / 2;
         int ty = r.y + (int)((r.h - currentFont()->lineHeight()) / 2);
-        detail::drawText(renderer, bi.text.c_str(), tx, ty, Color::White);
+        detail::drawText(renderer, bi.text.c_str(), tx, ty, buttonTextColor_);
     }
 }
 
