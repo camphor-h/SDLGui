@@ -178,7 +178,7 @@ Widget* fillCross(bool on);  // calls setFillCross()
 | `enabled()` | `bool` | Check if widget is enabled |
 | `ena(bool)` | `Widget*` | Chainable setEnabled |
 | `removeChild(Widget*)` | `void` | Remove and destroy a direct child |
-| `setFocusable(bool)` | `void` | Include the widget in Tab / Shift+Tab traversal |
+| `setFocusable(bool)` | `void` | Include the widget in Tab traversal when enabled |
 | `focusable()` | `bool` | Whether the widget participates in keyboard focus |
 | `requestRedraw()` | `void` | Ask the owning window to draw another frame |
 
@@ -497,8 +497,8 @@ The event loop polls events at the configured FPS (default 60), but idle windows
 
 #### Keyboard Focus
 
-- `Tab` / `Shift+Tab` cycles focusable widgets (TextBox, TextArea, ComboBox, Button, CheckBox, ListBox, Slider; custom widgets via `setFocusable(true)`)
-- A thin blue focus ring is drawn only for keyboard focus (Tab / Shift+Tab); mouse clicks do not draw it (TextBox has no focus border and relies on its caret)
+- `Tab` / `Shift+Tab` focus traversal is **opt-in**; enable it with `app.setTabTraversal(true)`. It cycles focusable widgets (TextBox, TextArea, ComboBox, Button, CheckBox, ListBox, Slider; custom widgets via `setFocusable(true)`)
+- A thin blue focus ring is drawn only for keyboard focus; mouse clicks do not draw it (TextBox has no focus border and relies on its caret)
 - Button: `Enter` / `Space` activates; CheckBox: `Enter` / `Space` toggles
 - ListBox: `Up` / `Down` changes the selected item
 - Slider: `Left` / `Right` steps the value; `Home` / `End` jumps to min/max
@@ -755,7 +755,7 @@ tb->keyMap().clear();
 tb->resetKeyBindings();
 ```
 
-Available actions: `CursorLeft/Right/Up/Down/Home/End`, `SelectLeft/Right/Up/Down/Home/End`, `SelectAll`, `Copy`, `Cut`, `Paste`, `Backspace`, `DeleteForward`, `InsertNewline`, `ClearSelection`. TextBox ignores cursor-up/down and newline. Only Shift/Ctrl/Alt/GUI are compared; Caps Lock and Num Lock are ignored. `Tab` is still reserved for focus traversal.
+Available actions: `CursorLeft/Right/Up/Down/Home/End`, `SelectLeft/Right/Up/Down/Home/End`, `SelectAll`, `Copy`, `Cut`, `Paste`, `Backspace`, `DeleteForward`, `InsertNewline`, `ClearSelection`. TextBox ignores cursor-up/down and newline. Only Shift/Ctrl/Alt/GUI are compared; Caps Lock and Num Lock are ignored. `Tab` is not a text-edit action; when `app.setTabTraversal(true)` is enabled it is consumed by focus traversal.
 
 #### Image
 
@@ -1259,7 +1259,7 @@ Widget* fillCross(bool on);  // 调用 setFillCross()
 | `enabled()` | `bool` | 检查控件是否启用 |
 | `ena(bool)` | `Widget*` | 链式 setEnabled |
 | `removeChild(Widget*)` | `void` | 移除并销毁直接子控件 |
-| `setFocusable(bool)` | `void` | 加入 Tab / Shift+Tab 焦点遍历 |
+| `setFocusable(bool)` | `void` | 开启 Tab 遍历时加入焦点顺序 |
 | `focusable()` | `bool` | 是否参与键盘焦点 |
 | `requestRedraw()` | `void` | 请求所属窗口再绘制一帧 |
 
@@ -1578,8 +1578,8 @@ app.run();  // 阻塞至退出
 
 #### 键盘焦点
 
-- `Tab` / `Shift+Tab` 在可聚焦控件间切换（TextBox、TextArea、ComboBox、Button、CheckBox、ListBox、Slider；自定义控件用 `setFocusable(true)` 加入）
-- 仅在键盘焦点（Tab / Shift+Tab）时绘制细蓝色焦点环；鼠标点击不绘制（TextBox 无焦点边框，靠光标指示焦点）
+- `Tab` / `Shift+Tab` 焦点遍历是**可选功能**，默认关闭；调用 `app.setTabTraversal(true)` 开启。开启后在可聚焦控件间切换（TextBox、TextArea、ComboBox、Button、CheckBox、ListBox、Slider；自定义控件用 `setFocusable(true)` 加入）
+- 仅在键盘焦点时绘制细蓝色焦点环；鼠标点击不绘制（TextBox 无焦点边框，靠光标指示焦点）
 - Button：`Enter` / `Space` 触发；CheckBox：`Enter` / `Space` 切换
 - ListBox：`Up` / `Down` 改变选中项
 - Slider：`Left` / `Right` 步进；`Home` / `End` 跳到最小/最大
@@ -1835,7 +1835,7 @@ tb->keyMap().clear();
 tb->resetKeyBindings();
 ```
 
-可用动作：`CursorLeft/Right/Up/Down/Home/End`、`SelectLeft/Right/Up/Down/Home/End`、`SelectAll`、`Copy`、`Cut`、`Paste`、`Backspace`、`DeleteForward`、`InsertNewline`、`ClearSelection`。TextBox 会忽略上下移动和换行动作。只比较 Shift/Ctrl/Alt/GUI 修饰键，Caps Lock/Num Lock 不影响匹配。`Tab` 目前仍保留给焦点切换。
+可用动作：`CursorLeft/Right/Up/Down/Home/End`、`SelectLeft/Right/Up/Down/Home/End`、`SelectAll`、`Copy`、`Cut`、`Paste`、`Backspace`、`DeleteForward`、`InsertNewline`、`ClearSelection`。TextBox 会忽略上下移动和换行动作。只比较 Shift/Ctrl/Alt/GUI 修饰键，Caps Lock/Num Lock 不影响匹配。`Tab` 不是文本编辑动作；开启 `app.setTabTraversal(true)` 时由焦点遍历消费。
 
 #### Image（图片）
 

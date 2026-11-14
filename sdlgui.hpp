@@ -1398,6 +1398,10 @@ public:
     void    setFPS(int fps);
     int     fps() const { return targetFps_; }
 
+    //Tab / Shift+Tab focus traversal is opt-in (off by default).
+    void    setTabTraversal(bool enabled) { tabTraversal_ = enabled; }
+    bool    tabTraversal() const { return tabTraversal_; }
+
     bool    isRunning() const { return running_; }
     bool    valid()     const { return initialized_; }
     Widget* focused()  const { return focused_; }
@@ -1412,6 +1416,7 @@ public:
 private:
     bool running_ = false;
     bool initialized_ = false;
+    bool tabTraversal_ = false;
     int  targetFps_ = 60;
     std::vector<std::unique_ptr<Window>> windows_;
     Widget* focused_  = nullptr;
@@ -6981,8 +6986,9 @@ void Application::handleKeyEvent(const SDL_Event& ev)
         return;
     }
 
-    //Tab / Shift+Tab focus traversal.
-    if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_TAB && win)
+    //Tab / Shift+Tab focus traversal (opt-in).
+    if (tabTraversal_ && ev.type == SDL_EVENT_KEY_DOWN &&
+        ev.key.key == SDLK_TAB && win)
     {
         std::vector<Widget*> list;
         collectFocusable(&win->root(), list);
