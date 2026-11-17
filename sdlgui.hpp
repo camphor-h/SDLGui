@@ -183,14 +183,22 @@ enum AnchorFlag : uint8_t
 };
 
 //==============================================================================
-// MouseEvent
+// Pointer / MouseEvent
 //==============================================================================
+enum class PointerType : uint8_t
+{
+    Mouse,
+    Touch,
+    Pen
+};
+
 struct MouseEvent
 {
     int    x = 0, y = 0;
     int    screenX = 0, screenY = 0;
     uint8_t button = 0;
     uint8_t clicks = 0;
+    PointerType pointerType = PointerType::Mouse;
 };
 
 //==============================================================================
@@ -406,6 +414,11 @@ public:
 
     //scroll
     virtual void onMouseWheel(int delta);
+
+    //touch panning / long-press behaviour
+    virtual bool canPan() const { return false; }
+    virtual bool panBy(int dx, int dy) { (void)dx; (void)dy; return false; }
+    virtual bool wantsLongPressSelection() const { return false; }
 
     //popups (DropDown / ComboBox)
     virtual bool isPopupOpen() const { return false; }
@@ -708,6 +721,9 @@ public:
     void     setPassword(bool on);
     void     setPasswordChar(char c);
     void     insertText(const std::string& text);
+    void     setComposition(const std::string& text);
+    void     clearComposition();
+    const std::string& composition() const { return composition_; }
     bool     scrollByPixels(int dx);
     void     adjustScroll();
 
@@ -770,6 +786,7 @@ private:
     bool        mouseSelecting_ = false;
     uint32_t    focusTick_  = 0;
     int         scrollOffX_ = 0;
+    std::string composition_;
     TextKeyMap  keyMap_;
 };
 
@@ -798,6 +815,9 @@ public:
     std::function<void(int)> onItemSelected;
 
     Widget* txt(const std::string& s) { addItem(s); return this; }
+
+    bool canPan() const override;
+    bool panBy(int dx, int dy) override;
 
 protected:
     void onRender(SDL_Renderer* renderer) override;
@@ -1181,11 +1201,16 @@ public:
     bool hitTestScrollbar(int absX, int absY) const;
     bool draggingScrollbar() const { return sbDragging_; }
 
+    bool canPan() const override;
+    bool panBy(int dx, int dy) override;
+
 protected:
     void onRender(SDL_Renderer* renderer) override;
     bool hitTest(int absX, int absY) const override;
     void onMouseWheel(int delta) override;
     void renderScrollbars(SDL_Renderer* renderer);
+
+    int scrollbarSize() const;
 
     int scrollX_ = 0, scrollY_ = 0;
     int contentW_ = 0, contentH_ = 0;
@@ -1259,6 +1284,10 @@ public:
 
     void insertText(const std::string& text);
     void insertNewline();
+    void setComposition(const std::string& text);
+    void clearComposition();
+    const std::string& composition() const { return composition_; }
+    bool wantsLongPressSelection() const override { return true; }
     void backspace();
     void deleteForward();
     void moveCursorLeft(bool select = false);
@@ -1300,6 +1329,7 @@ private:
     bool        mouseSelecting_ = false;
     bool        cursorVisible_ = false;
     uint32_t    cursorTick_ = 0;
+    std::string composition_;
     TextKeyMap  keyMap_;
 
     std::vector<std::string> splitLines() const;
@@ -1431,6 +1461,7 @@ public:
     void setSelectionColor(Color color);
     void setSelectable(bool on);
     bool selectable() const { return selectable_; }
+    bool wantsLongPressSelection() const override { return selectable_; }
     void selectAll();
     void clearSelection();
     std::string selectedText() const;
@@ -1570,6 +1601,19 @@ public:
     void     requestRedraw() { redraw_ = true; }
     bool     needsRedraw() const;
 
+    //Density / mobile helpers. uiScale is a logical zoom factor (1.0 default).
+    void     setUiScale(float scale);
+    float    uiScale() const { return uiScale_; }
+    void     setTouchMode(bool on);
+    bool     touchMode() const { return touchMode_; }
+    void     setUseSafeArea(bool on);
+    bool     useSafeArea() const { return useSafeArea_; }
+    Rect     safeArea() const { return safeArea_; }
+    //Logical pixels reserved at the bottom for an on-screen keyboard.
+    void     setKeyboardInset(int px);
+    int      keyboardInset() const { return keyboardInset_; }
+    void     refreshMetrics();
+
     bool               valid()           const { return sdlWindow_ != nullptr && renderer_ != nullptr; }
 
     const std::string& title()           const { return title_; }
@@ -1612,6 +1656,11 @@ private:
     int           clientWidth_     = 800;
     int           clientHeight_    = 600;
     bool          resizable_       = true;
+    float         uiScale_         = 1.0f;
+    bool          touchMode_       = false;
+    bool          useSafeArea_     = false;
+    Rect          safeArea_        = { 0, 0, 800, 600 };
+    int           keyboardInset_   = 0;
     bool          shown_           = false;
     bool          redraw_          = true;
     uint64_t      lastBlinkPhase_  = 0;
@@ -1628,6 +1677,9 @@ private:
     int           pressedTitleBtn_ = 0;  //button pressed on mouse down
 
     void onResized(int w, int h);
+    void applyPresentation();
+    void updateSafeArea();
+    void layoutRoot();
     bool handleTitleBarEvent(const SDL_Event& ev, int mx, int my);
     void forgetWidget(Widget* w);
     bool anyContinuousRedraw(Widget* w) const;
@@ -1667,6 +1719,22 @@ public:
     void    setFPS(int fps);
     int     fps() const { return targetFps_; }
 
+    //Logical UI zoom (1.0 = no change). Affects windows created afterwards
+    //and existing windows immediately.
+    void    setUiScale(float scale);
+    float   uiScale() const { return uiScale_; }
+
+    //Mobile/touch defaults: larger scrollbars and finger panning. Auto-enabled
+    //for Android/iOS video drivers, can be forced on desktop.
+    void    setTouchMode(bool enabled);
+    bool    touchMode() const { return touchMode_; }
+
+    void    setUseSafeArea(bool enabled);
+    bool    useSafeArea() const { return useSafeArea_; }
+
+    //Called for Android's back key when no popup/dialog/focus consumed it.
+    std::function<void()> onBackPressed;
+
     //Tab / Shift+Tab focus traversal is opt-in (off by default).
     void    setTabTraversal(bool enabled) { tabTraversal_ = enabled; }
     bool    tabTraversal() const { return tabTraversal_; }
@@ -1687,22 +1755,66 @@ private:
     bool initialized_ = false;
     bool tabTraversal_ = false;
     int  targetFps_ = 60;
+    float uiScale_ = 1.0f;
+    bool touchMode_ = false;
+    bool useSafeArea_ = false;
     std::vector<std::unique_ptr<Window>> windows_;
     Widget* focused_  = nullptr;
     Widget* hovered_  = nullptr;
     Widget* pressedWidget_ = nullptr;
 
+    struct TouchGesture
+    {
+        bool        active = false;
+        bool        pendingPress = false;
+        bool        selecting = false;
+        bool        scrolling = false;
+        bool        axisLocked = false;
+        bool        axisX = false;
+        SDL_FingerID finger = 0;
+        Uint32      windowID = 0;
+        int         startX = 0, startY = 0;
+        int         lastX = 0, lastY = 0;
+        Uint32      startTicks = 0;
+        Uint32      lastMoveTicks = 0;
+        float       velocityX = 0.0f, velocityY = 0.0f;
+        Widget*     target = nullptr;
+        Widget*     panTarget = nullptr;
+    };
+
+    struct InertiaState
+    {
+        Widget* widget = nullptr;
+        float   vx = 0.0f, vy = 0.0f;
+        float   restX = 0.0f, restY = 0.0f;
+        Uint32  lastTicks = 0;
+    };
+
+    TouchGesture touch_;
+    std::vector<InertiaState> inertia_;
+    PointerType pointerType_ = PointerType::Mouse;
+
     static Application* instance_;
 
     Window* findWindowByID(Uint32 id);
     Widget* hitTest(Widget* w, int absX, int absY);
+    Widget* findPanTarget(Widget* w) const;
     void    updateHovered(Widget* target);
     void    updateTextInputArea(Widget* widget);
+    void    ensureWidgetVisible(Widget* widget);
     void    widgetDestroyed(Widget* w);
     void    closePopups(Widget* w, int absX, int absY);
     void    processEvent(const SDL_Event& ev);
     void    handleMouseEvent(const SDL_Event& ev);
+    void    handleTouchEvent(const SDL_Event& ev);
     void    handleKeyEvent(const SDL_Event& ev);
+    void    dispatchTouchMouse(Uint32 type, int x, int y,
+                               uint8_t button, uint8_t clicks);
+    void    cancelTouchPress();
+    void    updateTouch();
+    void    updateInertia();
+    void    stopTextInput(Window* win);
+    void    clearTouch();
 
     friend class Widget;
 };
@@ -3926,6 +4038,22 @@ int TextBox::maskCharWidth() const
     return detail::glyphWidth((uint32_t)(unsigned char)passwordChar_);
 }
 
+void TextBox::setComposition(const std::string& text)
+{
+    if (composition_ == text) return;
+    composition_ = text;
+    adjustScroll();
+    markDirty();
+}
+
+void TextBox::clearComposition()
+{
+    if (composition_.empty()) return;
+    composition_.clear();
+    adjustScroll();
+    markDirty();
+}
+
 int TextBox::displayWidthTo(int bytePos) const
 {
     int w = 0;
@@ -4040,7 +4168,10 @@ bool TextBox::deleteSelection()
 void TextBox::adjustScroll()
 {
     int cw       = displayWidthTo(cursorPos_);
-    int textW    = displayWidth();
+    int compW    = password_
+                 ? maskCharWidth() * codepointCount(composition_)
+                 : detail::textWidth(composition_.c_str());
+    int textW    = displayWidth() + compW;
     int visibleW = width_ - 8;
 
     if (visibleW <= 0)
@@ -4058,8 +4189,8 @@ void TextBox::adjustScroll()
     int cursorX = scrollOffX_ + cw;
 
     //cursor beyond right edge → scroll left
-    if (cursorX + 8 > visibleW)
-        scrollOffX_ = visibleW - cw - 8;
+    if (cursorX + compW + 8 > visibleW)
+        scrollOffX_ = visibleW - cw - compW - 8;
 
     //cursor beyond left edge → scroll right
     if (scrollOffX_ + cw < 0)
@@ -4077,7 +4208,9 @@ bool TextBox::textInputRect(Rect& rect) const
     int lineH = currentFont()->lineHeight();
     int cx = r.x + 4 + scrollOffX_ + displayWidthTo(cursorPos_);
     int cy = r.y + (r.h - lineH) / 2;
-    rect = { cx, cy, 1, lineH };
+    int cw = password_ ? maskCharWidth() * codepointCount(composition_)
+                       : detail::textWidth(composition_.c_str());
+    rect = { cx, cy, std::max(1, cw), lineH };
     return true;
 }
 
@@ -4135,13 +4268,31 @@ void TextBox::onRender(SDL_Renderer* renderer)
         detail::drawText(renderer, shown.c_str(), tx, ty, textColor_);
     }
 
+    //inline IME composition at the caret (not committed to text_)
+    int compW = 0;
+    if (hasFocus_ && !composition_.empty())
+    {
+        std::string comp = composition_;
+        if (password_)
+            comp.assign((std::size_t)codepointCount(composition_), passwordChar_);
+
+        int cx = tx + displayWidthTo(cursorPos_);
+        detail::drawText(renderer, comp.c_str(), cx, ty, textColor_);
+        compW = detail::textWidth(comp.c_str());
+
+        SDL_SetRenderDrawColor(renderer, textColor_.r, textColor_.g,
+                               textColor_.b, textColor_.a);
+        SDL_RenderLine(renderer, (float)cx, (float)(ty + lineH - 1),
+                       (float)(cx + compW), (float)(ty + lineH - 1));
+    }
+
     //cursor
     if (hasFocus_)
     {
         uint32_t elapsed = SDL_GetTicks() - focusTick_;
         if ((elapsed / 500) % 2 == 0) //blink 500ms
         {
-            int cx = tx + displayWidthTo(cursorPos_);
+            int cx = tx + displayWidthTo(cursorPos_) + compW;
             SDL_SetRenderDrawColor(renderer,
                 cursorColor_.r, cursorColor_.g, cursorColor_.b, cursorColor_.a);
             SDL_RenderLine(renderer, cx, ty, cx, ty + lineH);
@@ -4165,13 +4316,13 @@ ListBox::ListBox(Widget* parent)
     onMouseDown = [this](MouseEvent& e)
     {
         int contentH = (int)items_.size() * itemH_;
-        int sbW = 10;
+        int sbW = (getWindow() && getWindow()->touchMode()) ? 24 : 10;
 
         //scrollbar
         if (contentH > height_ && e.x >= width_ - sbW)
         {
             int maxOff = contentH - height_;
-            int thumbH = std::max(20, height_ * height_ / contentH);
+            int thumbH = std::max(sbW, height_ * height_ / contentH);
             int trackH = height_ - thumbH;
             int thumbY = trackH > 0
                 ? (int)((long long)trackH * scrollOffY_ / std::max(1, maxOff))
@@ -4209,7 +4360,8 @@ ListBox::ListBox(Widget* parent)
         {
             int contentH = (int)items_.size() * itemH_;
             int maxOff = std::max(0, contentH - height_);
-            int thumbH = std::max(20, height_ * height_ / std::max(1, contentH));
+            int sbW = (getWindow() && getWindow()->touchMode()) ? 24 : 10;
+            int thumbH = std::max(sbW, height_ * height_ / std::max(1, contentH));
             int trackH = height_ - thumbH;
             if (trackH > 0 && maxOff > 0)
             {
@@ -4227,7 +4379,8 @@ ListBox::ListBox(Widget* parent)
         }
 
         int idx = (e.y + scrollOffY_) / itemH_;
-        if (e.x >= width_ - 10 && (int)items_.size() * itemH_ > height_)
+        int sbW = (getWindow() && getWindow()->touchMode()) ? 24 : 10;
+        if (e.x >= width_ - sbW && (int)items_.size() * itemH_ > height_)
             idx = -1;
 
         int old = hovered_;
@@ -4248,6 +4401,25 @@ void ListBox::addItem(const std::string& item)
 {
     items_.push_back(item);
     markDirty();
+}
+
+bool ListBox::canPan() const
+{
+    return (int)items_.size() * itemH_ > height_;
+}
+
+bool ListBox::panBy(int dx, int dy)
+{
+    (void)dx;
+    int contentH = (int)items_.size() * itemH_;
+    int maxOff = std::max(0, contentH - height_);
+    if (maxOff <= 0 || dy == 0) return false;
+
+    int next = std::max(0, std::min(scrollOffY_ - dy, maxOff));
+    if (next == scrollOffY_) return false;
+    scrollOffY_ = next;
+    markDirty();
+    return true;
 }
 
 void ListBox::removeItem(int index)
@@ -4338,9 +4510,9 @@ void ListBox::onRender(SDL_Renderer* renderer)
     int contentH = (int)items_.size() * itemH_;
     if (contentH > height_)
     {
-        const int sbW = 10;
+        const int sbW = (getWindow() && getWindow()->touchMode()) ? 24 : 10;
         int maxOff = contentH - height_;
-        int thumbH = std::max(20, height_ * height_ / contentH);
+        int thumbH = std::max(sbW, height_ * height_ / contentH);
         int trackH = height_ - thumbH;
         int thumbY = trackH > 0
             ? (int)((long long)trackH * scrollOffY_ / std::max(1, maxOff))
@@ -5592,6 +5764,21 @@ void TextArea::insertText(const std::string& text)
     refreshLayout();
 }
 
+void TextArea::setComposition(const std::string& text)
+{
+    if (composition_ == text) return;
+    composition_ = text;
+    ensureCursorVisible();
+    markDirty();
+}
+
+void TextArea::clearComposition()
+{
+    if (composition_.empty()) return;
+    composition_.clear();
+    markDirty();
+}
+
 void TextArea::insertNewline()
 {
     if (readOnly_) return;
@@ -6093,6 +6280,33 @@ void TextArea::onRender(SDL_Renderer* renderer)
                                        cursorColor_.b, cursorColor_.a);
                 SDL_RenderLine(renderer, cx, cy, cx, cy + lineH);
             }
+        }
+    }
+
+    //inline IME composition on the cursor row (not committed to text_)
+    if (!composition_.empty() && cursorVisible_ && !visualLines_.empty())
+    {
+        int row = visualRowForCursor();
+        const VisualLine& v = visualLines_[row];
+        const std::string& ln = lines[v.line];
+        int col = std::min(cursorCol_, (int)ln.size());
+
+        int cx = r.x + gutter + 4 - scrollX_ +
+                 prefixWidth(ln, col) - prefixWidth(ln, v.start);
+        int cy = r.y + row * lineH - scrollY_;
+        if (cy + lineH >= r.y && cy <= r.y + r.h)
+        {
+            std::string comp;
+            comp.reserve(composition_.size());
+            for (char c : composition_)
+                if (c != '\n' && c != '\r') comp.push_back(c);
+
+            detail::drawText(renderer, comp.c_str(), cx, cy, textColor_);
+            int compW = lineWidth(comp);
+            SDL_SetRenderDrawColor(renderer, textColor_.r, textColor_.g,
+                                   textColor_.b, textColor_.a);
+            SDL_RenderLine(renderer, (float)cx, (float)(cy + lineH - 1),
+                           (float)(cx + compW), (float)(cy + lineH - 1));
         }
     }
 
@@ -7167,12 +7381,13 @@ ScrollView::ScrollView(Widget* parent)
 {
     onMouseDown = [this](MouseEvent& e)
     {
+        int sbSize = scrollbarSize();
         //vertical scrollbar
-        if (showVScroll_ && contentH_ > height_ && e.x >= width_ - 10)
+        if (showVScroll_ && contentH_ > height_ && e.x >= width_ - sbSize)
         {
             float ratio = (float)height_ / contentH_;
             int thumbH = (int)(height_ * ratio);
-            if (thumbH < 10) thumbH = 10;
+            if (thumbH < sbSize) thumbH = sbSize;
             sbDragging_ = true;
             sbVertical_ = true;
             sbDragMouse_ = e.y;
@@ -7180,15 +7395,15 @@ ScrollView::ScrollView(Widget* parent)
             return;
         }
         //horizontal scrollbar
-        if (showHScroll_ && contentW_ > width_ && e.y >= height_ - 10)
+        if (showHScroll_ && contentW_ > width_ && e.y >= height_ - sbSize)
         {
             int sbW = width_;
-            if (showVScroll_ && contentH_ > height_) sbW -= 10;
+            if (showVScroll_ && contentH_ > height_) sbW -= sbSize;
             if (e.x < sbW)
             {
                 float ratio = (float)width_ / contentW_;
-                int thumbW = (int)(ratio * (showVScroll_ && contentH_ > height_ ? width_ - 10 : width_));
-                if (thumbW < 10) thumbW = 10;
+                int thumbW = (int)(ratio * (showVScroll_ && contentH_ > height_ ? width_ - sbSize : width_));
+                if (thumbW < sbSize) thumbW = sbSize;
                 sbDragging_ = true;
                 sbVertical_ = false;
                 sbDragMouse_ = e.x;
@@ -7260,11 +7475,12 @@ void ScrollView::onRender(SDL_Renderer* renderer)
 void ScrollView::renderScrollbars(SDL_Renderer* renderer)
 {
     Rect r = absoluteRect();
+    int sbSize = scrollbarSize();
 
     //vertical scrollbar
     if (showVScroll_ && contentH_ > r.h)
     {
-        int sbW  = 10;
+        int sbW  = sbSize;
         int sbX  = r.x + r.w - sbW;
         int sbY  = r.y;
         int sbH  = r.h;
@@ -7278,7 +7494,7 @@ void ScrollView::renderScrollbars(SDL_Renderer* renderer)
         //thumb
         float ratio = (float)r.h / contentH_;
         int thumbH  = (int)(sbH * ratio);
-        if (thumbH < 10) thumbH = 10;
+        if (thumbH < sbSize) thumbH = sbSize;
         int thumbY  = sbY + (int)(scrollY_ * ratio);
         SDL_SetRenderDrawColor(renderer, scrollThumbColor_.r, scrollThumbColor_.g,
                                scrollThumbColor_.b, scrollThumbColor_.a);
@@ -7289,13 +7505,13 @@ void ScrollView::renderScrollbars(SDL_Renderer* renderer)
     //horizontal scrollbar
     if (showHScroll_ && contentW_ > r.w)
     {
-        int sbH  = 10;
+        int sbH  = sbSize;
         int sbX  = r.x;
         int sbY  = r.y + r.h - sbH;
         int sbW  = r.w;
 
         if (showVScroll_ && contentH_ > r.h)
-            sbW -= 10;  //leave room for vsb
+            sbW -= sbSize;  //leave room for vsb
 
         SDL_SetRenderDrawColor(renderer, scrollTrackColor_.r, scrollTrackColor_.g,
                                scrollTrackColor_.b, scrollTrackColor_.a);
@@ -7304,7 +7520,7 @@ void ScrollView::renderScrollbars(SDL_Renderer* renderer)
 
         float ratio = (float)r.w / contentW_;
         int thumbW  = (int)(sbW * ratio);
-        if (thumbW < 10) thumbW = 10;
+        if (thumbW < sbSize) thumbW = sbSize;
         int thumbX  = sbX + (int)(scrollX_ * ratio);
         SDL_SetRenderDrawColor(renderer, scrollThumbColor_.r, scrollThumbColor_.g,
                                scrollThumbColor_.b, scrollThumbColor_.a);
@@ -7322,20 +7538,41 @@ bool ScrollView::hitTestScrollbar(int absX, int absY) const
 {
     int ax = absoluteX();
     int ay = absoluteY();
+    int sbSize = scrollbarSize();
 
     if (showVScroll_ && contentH_ > height_
-        && absX >= ax + width_ - 10 && absX < ax + width_)
+        && absX >= ax + width_ - sbSize && absX < ax + width_)
         return absY >= ay && absY < ay + height_;
 
     if (showHScroll_ && contentW_ > width_)
     {
         int sbW = width_;
-        if (showVScroll_ && contentH_ > height_) sbW -= 10;
+        if (showVScroll_ && contentH_ > height_) sbW -= sbSize;
         if (absX >= ax && absX < ax + sbW)
-            return absY >= ay + height_ - 10 && absY < ay + height_;
+            return absY >= ay + height_ - sbSize && absY < ay + height_;
     }
 
     return false;
+}
+
+int ScrollView::scrollbarSize() const
+{
+    Window* win = getWindow();
+    return (win && win->touchMode()) ? 24 : 10;
+}
+
+bool ScrollView::canPan() const
+{
+    return contentW_ > width_ || contentH_ > height_;
+}
+
+bool ScrollView::panBy(int dx, int dy)
+{
+    if (dx == 0 && dy == 0) return false;
+    int oldX = scrollX_;
+    int oldY = scrollY_;
+    setScrollOffset(oldX - dx, oldY - dy);
+    return scrollX_ != oldX || scrollY_ != oldY;
 }
 
 bool ScrollView::hitTest(int absX, int absY) const
@@ -7384,19 +7621,29 @@ Window::Window(const char* title, int w, int h, TitleBarMode mode)
 
     if (!SDL_SetRenderVSync(renderer_, 1))
         SDL_Log("sdlgui: SDL_SetRenderVSync failed: %s", SDL_GetError());
-    SDL_StartTextInput(sdlWindow_);
+
+    if (auto* app = Application::instance())
+    {
+        uiScale_    = app->uiScale();
+        touchMode_  = app->touchMode();
+        useSafeArea_ = app->useSafeArea();
+    }
 
     if (mode != TitleBarMode::System)
     {
         SDL_SetWindowBordered(sdlWindow_, false);
         if (mode == TitleBarMode::Custom)
             titleBarHeight_ = 30;
-        root_->setPosition(0, titleBarHeight_);
-        root_->setSize(w, h - titleBarHeight_);
 
         //Borderless windows need explicit edge hit-testing for OS resize.
         SDL_SetWindowHitTest(sdlWindow_, &Window::hitTest, this);
     }
+
+    //Use the real window size (mobile platforms ignore the requested size).
+    SDL_GetWindowSize(sdlWindow_, &w, &h);
+    clientWidth_  = std::max(1, w);
+    clientHeight_ = std::max(1, h);
+    applyPresentation();
 }
 
 SDL_HitTestResult SDLCALL Window::hitTest(SDL_Window* sdlWindow,
@@ -7479,6 +7726,120 @@ bool Window::needsRedraw() const
 #endif
 }
 
+void Window::applyPresentation()
+{
+    if (!sdlWindow_ || !renderer_)
+        return;
+
+    int ww = 0, wh = 0;
+    SDL_GetWindowSize(sdlWindow_, &ww, &wh);
+    if (ww <= 0 || wh <= 0)
+        return;
+
+    float scale = (uiScale_ > 0.0f) ? uiScale_ : 1.0f;
+    int lw = std::max(1, (int)std::lround(ww / scale));
+    int lh = std::max(1, (int)std::lround(wh / scale));
+
+    clientWidth_  = lw;
+    clientHeight_ = lh;
+
+    //Logical presentation keeps widget coordinates in points on high-DPI
+    //displays and applies the optional UI zoom without touching every widget.
+    SDL_SetRenderLogicalPresentation(renderer_, lw, lh,
+                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
+
+    updateSafeArea();
+    layoutRoot();
+    redraw_ = true;
+}
+
+void Window::updateSafeArea()
+{
+    safeArea_ = { 0, 0, clientWidth_, clientHeight_ };
+    if (!useSafeArea_ || !sdlWindow_ || !renderer_)
+        return;
+
+    SDL_Rect sa{};
+    if (!SDL_GetWindowSafeArea(sdlWindow_, &sa) || sa.w <= 0 || sa.h <= 0)
+        return;
+
+    float x0 = 0.f, y0 = 0.f, x1 = 0.f, y1 = 0.f;
+    if (!SDL_RenderCoordinatesFromWindow(renderer_, (float)sa.x, (float)sa.y,
+                                         &x0, &y0) ||
+        !SDL_RenderCoordinatesFromWindow(renderer_,
+                                         (float)(sa.x + sa.w),
+                                         (float)(sa.y + sa.h),
+                                         &x1, &y1))
+        return;
+
+    int x = (int)std::lround(x0);
+    int y = (int)std::lround(y0);
+    int r = (int)std::lround(x1);
+    int b = (int)std::lround(y1);
+
+    x = std::max(0, std::min(x, clientWidth_ - 1));
+    y = std::max(0, std::min(y, clientHeight_ - 1));
+    r = std::max(x + 1, std::min(r, clientWidth_));
+    b = std::max(y + 1, std::min(b, clientHeight_));
+
+    safeArea_ = { x, y, r - x, b - y };
+}
+
+void Window::layoutRoot()
+{
+    if (!root_)
+        return;
+
+    Rect area = useSafeArea_ ? safeArea_
+                             : Rect{ 0, 0, clientWidth_, clientHeight_ };
+
+    int top = area.y + titleBarHeight_;
+    int h   = area.h - titleBarHeight_ - keyboardInset_;
+    if (h < 0) h = 0;
+
+    root_->setPosition(area.x, top);
+    root_->setSize(area.w, h);
+}
+
+void Window::refreshMetrics()
+{
+    applyPresentation();
+}
+
+void Window::setUiScale(float scale)
+{
+    if (scale < 0.5f) scale = 0.5f;
+    if (scale > 4.0f) scale = 4.0f;
+    if (std::fabs(scale - uiScale_) < 0.0001f) return;
+    uiScale_ = scale;
+    applyPresentation();
+}
+
+void Window::setTouchMode(bool on)
+{
+    if (touchMode_ == on) return;
+    touchMode_ = on;
+    redraw_ = true;
+}
+
+void Window::setUseSafeArea(bool on)
+{
+    if (useSafeArea_ == on) return;
+    useSafeArea_ = on;
+    updateSafeArea();
+    layoutRoot();
+    redraw_ = true;
+}
+
+void Window::setKeyboardInset(int px)
+{
+    if (px < 0) px = 0;
+    if (keyboardInset_ == px) return;
+    keyboardInset_ = px;
+    layoutRoot();
+    redraw_ = true;
+}
+
 void Window::setTitle(const char* title)
 {
     title_ = title ? title : "";
@@ -7522,8 +7883,7 @@ void Window::setTitleBarMode(TitleBarMode mode)
     {
         titleBarHeight_ = (mode == TitleBarMode::Custom) ? 30 : 0;
     }
-    root_->setPosition(0, titleBarHeight_);
-    root_->setSize(clientWidth_, clientHeight_ - titleBarHeight_);
+    layoutRoot();
 
     if (!shown_ && sdlWindow_)
     {
@@ -7535,18 +7895,15 @@ void Window::setTitleBarMode(TitleBarMode mode)
 void Window::setTitleBarHeight(int h)
 {
     titleBarHeight_ = h;
-    root_->setPosition(0, titleBarHeight_);
-    root_->setSize(clientWidth_, clientHeight_ - titleBarHeight_);
+    layoutRoot();
     redraw_ = true;
 }
 
 void Window::onResized(int w, int h)
 {
-    clientWidth_  = w;
-    clientHeight_ = h;
-    root_->setSize(w, h - titleBarHeight_);
-    root_->setPosition(0, titleBarHeight_);
-    redraw_ = true;
+    (void)w;
+    (void)h;
+    applyPresentation();
 }
 
 bool Window::handleTitleBarEvent(const SDL_Event& ev, int mx, int my)
@@ -7943,6 +8300,19 @@ Application::Application()
     }
     initialized_ = true;
     SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
+
+    //We translate finger events ourselves; disable SDL's synthetic mouse
+    //events to avoid duplicate clicks. Real mice still arrive as mouse events.
+    SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+    SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "0");
+
+    const char* driver = SDL_GetCurrentVideoDriver();
+    if (driver && (std::strcmp(driver, "android") == 0 ||
+                   std::strcmp(driver, "uikit") == 0))
+    {
+        touchMode_   = true;
+        useSafeArea_ = true;
+    }
 }
 
 Application::~Application()
@@ -7958,6 +8328,29 @@ Application::~Application()
 void Application::setFPS(int fps)
 {
     targetFps_ = fps;
+}
+
+void Application::setUiScale(float scale)
+{
+    if (scale < 0.5f) scale = 0.5f;
+    if (scale > 4.0f) scale = 4.0f;
+    uiScale_ = scale;
+    for (auto& win : windows_)
+        win->setUiScale(scale);
+}
+
+void Application::setTouchMode(bool enabled)
+{
+    touchMode_ = enabled;
+    for (auto& win : windows_)
+        win->setTouchMode(enabled);
+}
+
+void Application::setUseSafeArea(bool enabled)
+{
+    useSafeArea_ = enabled;
+    for (auto& win : windows_)
+        win->setUseSafeArea(enabled);
 }
 
 Window& Application::addWindow(const char* title, int w, int h)
@@ -8011,20 +8404,35 @@ void Application::updateTextInputArea(Widget* widget)
     if (caret.w < 1) caret.w = 1;
     if (caret.h < 1) caret.h = 1;
 
+    float x0 = 0.f, y0 = 0.f, x1 = 0.f, y1 = 0.f;
+    if (!SDL_RenderCoordinatesToWindow(win->renderer(), (float)caret.x,
+                                       (float)caret.y, &x0, &y0) ||
+        !SDL_RenderCoordinatesToWindow(win->renderer(),
+                                       (float)(caret.x + caret.w),
+                                       (float)(caret.y + caret.h),
+                                       &x1, &y1))
+        return;
+
     int ww = 0, wh = 0;
     SDL_GetWindowSize(win->handle(), &ww, &wh);
+    int ax = (int)std::lround(x0);
+    int ay = (int)std::lround(y0);
+    int aw = std::max(1, (int)std::lround(x1 - x0));
+    int ah = std::max(1, (int)std::lround(y1 - y0));
     if (ww > 0)
     {
-        if (caret.x < 0) caret.x = 0;
-        if (caret.x >= ww) caret.x = ww - 1;
+        if (ax < 0) ax = 0;
+        if (ax >= ww) ax = ww - 1;
+        if (aw > ww - ax) aw = ww - ax;
     }
     if (wh > 0)
     {
-        if (caret.y < 0) caret.y = 0;
-        if (caret.y >= wh) caret.y = wh - 1;
+        if (ay < 0) ay = 0;
+        if (ay >= wh) ay = wh - 1;
+        if (ah > wh - ay) ah = wh - ay;
     }
 
-    SDL_Rect area = { caret.x, caret.y, caret.w, caret.h };
+    SDL_Rect area = { ax, ay, aw, ah };
     SDL_SetTextInputArea(win->handle(), &area, 0);
 }
 
@@ -8253,6 +8661,7 @@ void Application::run()
         Uint64 frameStart = SDL_GetTicks();
 
         processEvents();
+        updateInertia();
 
         for (auto& win : windows_)
             win->render();
@@ -8278,6 +8687,7 @@ void Application::processEvents()
     SDL_Event ev;
     while (SDL_PollEvent(&ev))
         processEvent(ev);
+    updateTouch();
 }
 
 void Application::processEvent(const SDL_Event& ev)
@@ -8290,12 +8700,46 @@ void Application::processEvent(const SDL_Event& ev)
         case SDL_EVENT_MOUSE_MOTION:
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
         case SDL_EVENT_MOUSE_BUTTON_UP:
-            handleMouseEvent(ev);
+            {
+                SDL_Event me = ev;
+                Window* win = nullptr;
+                if (ev.type == SDL_EVENT_MOUSE_MOTION)
+                    win = findWindowByID(me.motion.windowID);
+                else
+                    win = findWindowByID(me.button.windowID);
+
+                //Map window coordinates to logical renderer coordinates.
+                if (win && win->renderer())
+                    SDL_ConvertEventToRenderCoordinates(win->renderer(), &me);
+
+                handleMouseEvent(me);
+                updateTextInputArea(focused_);
+            }
+            break;
+        case SDL_EVENT_FINGER_DOWN:
+        case SDL_EVENT_FINGER_MOTION:
+        case SDL_EVENT_FINGER_UP:
+        case SDL_EVENT_FINGER_CANCELED:
+            handleTouchEvent(ev);
             updateTextInputArea(focused_);
             break;
         case SDL_EVENT_TEXT_EDITING:
-            //Composition is drawn by the OS/IME; committed text arrives as TEXT_INPUT.
-            updateTextInputArea(focused_);
+            {
+                Widget* target = focused_;
+                if (Window* win = findWindowByID(ev.edit.windowID))
+                    target = win->focused_;
+
+                if (target)
+                {
+                    const char* text = ev.edit.text ? ev.edit.text : "";
+                    if (auto* tb = dynamic_cast<TextBox*>(target))
+                        tb->setComposition(text);
+                    else if (auto* ta = dynamic_cast<TextArea*>(target))
+                        ta->setComposition(text);
+                }
+                //Composition is drawn inline; keep the IME anchored to it.
+                updateTextInputArea(target);
+            }
             break;
         case SDL_EVENT_TEXT_INPUT:
             {
@@ -8307,10 +8751,12 @@ void Application::processEvent(const SDL_Event& ev)
                 {
                     if (auto* tb = dynamic_cast<TextBox*>(target))
                     {
+                        tb->clearComposition();
                         tb->insertText(ev.text.text);
                     }
                     else if (auto* ta = dynamic_cast<TextArea*>(target))
                     {
+                        ta->clearComposition();
                         ta->insertText(ev.text.text);
                     }
                     else if (auto* cb = dynamic_cast<ComboBox*>(target))
@@ -8326,10 +8772,14 @@ void Application::processEvent(const SDL_Event& ev)
             {
                 auto* win = findWindowByID(ev.wheel.windowID);
                 if (!win) break;
-                Widget* target = hitTest(&win->root(), (int)ev.wheel.mouse_x, (int)ev.wheel.mouse_y);
+                float wx = ev.wheel.mouse_x;
+                float wy = ev.wheel.mouse_y;
+                if (win->renderer())
+                    SDL_RenderCoordinatesFromWindow(win->renderer(), wx, wy, &wx, &wy);
+                Widget* target = hitTest(&win->root(), (int)std::lround(wx), (int)std::lround(wy));
                 bool shift = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
-                float wx = ev.wheel.x;
-                float wy = ev.wheel.y;
+                wx = ev.wheel.x;
+                wy = ev.wheel.y;
 
                 while (target)
                 {
@@ -8375,6 +8825,19 @@ void Application::processEvent(const SDL_Event& ev)
                 }
             }
             break;
+        case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+        case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
+        case SDL_EVENT_WINDOW_SAFE_AREA_CHANGED:
+            {
+                auto* win = findWindowByID(ev.window.windowID);
+                if (win)
+                {
+                    win->refreshMetrics();
+                    if (win->focused_)
+                        updateTextInputArea(win->focused_);
+                }
+            }
+            break;
         case SDL_EVENT_WINDOW_EXPOSED:
         case SDL_EVENT_WINDOW_SHOWN:
         case SDL_EVENT_WINDOW_RESTORED:
@@ -8396,11 +8859,32 @@ void Application::processEvent(const SDL_Event& ev)
             }
             break;
         case SDL_EVENT_WINDOW_FOCUS_LOST:
+            {
+                auto* win = findWindowByID(ev.window.windowID);
+                if (win)
+                    stopTextInput(win);
+                pressedWidget_ = nullptr;
+                SDL_CaptureMouse(false);
+                updateHovered(nullptr);
+                clearTouch();
+                if (win)
+                    win->requestRedraw();
+            }
+            break;
+        case SDL_EVENT_WILL_ENTER_BACKGROUND:
+            for (auto& win : windows_)
+                stopTextInput(win.get());
             pressedWidget_ = nullptr;
             SDL_CaptureMouse(false);
             updateHovered(nullptr);
-            if (auto* win = findWindowByID(ev.window.windowID))
+            clearTouch();
+            break;
+        case SDL_EVENT_DID_ENTER_FOREGROUND:
+            for (auto& win : windows_)
+            {
+                win->refreshMetrics();
                 win->requestRedraw();
+            }
             break;
         default:
             if (onUserEvent) onUserEvent(ev);
@@ -8472,6 +8956,358 @@ void Application::updateHovered(Widget* target)
     }
 }
 
+Widget* Application::findPanTarget(Widget* w) const
+{
+    for (Widget* cur = w; cur; cur = cur->parent())
+    {
+        if (cur->canPan())
+            return cur;
+    }
+    return nullptr;
+}
+
+void Application::stopTextInput(Window* win)
+{
+    if (!win || !win->handle())
+        return;
+
+    if (win->focused_)
+    {
+        if (auto* tb = dynamic_cast<TextBox*>(win->focused_))
+            tb->clearComposition();
+        if (auto* ta = dynamic_cast<TextArea*>(win->focused_))
+            ta->clearComposition();
+    }
+    SDL_StopTextInput(win->handle());
+}
+
+void Application::ensureWidgetVisible(Widget* widget)
+{
+    if (!widget)
+        return;
+
+    //Innermost scroll container first; then walk outwards.
+    Widget* cur = widget;
+    while (cur)
+    {
+        Widget* parent = cur->parent();
+        auto* sv = dynamic_cast<ScrollView*>(parent);
+        if (sv && sv->canPan())
+        {
+            int wy = 0;
+
+            //Compute the widget position in the scroll view's content space.
+            Widget* walk = widget;
+            while (walk && walk != sv)
+            {
+                wy += walk->y();
+                Widget* p = walk->parent();
+                if (p && p != sv)
+                {
+                    if (auto* psv = dynamic_cast<ScrollView*>(p))
+                        wy -= psv->scrollY();
+                }
+                walk = p;
+            }
+
+            int margin = 6;
+            int viewH = sv->height();
+            int visibleY = wy - sv->scrollY();
+
+            if (visibleY < margin)
+                sv->setScrollOffset(sv->scrollX(), wy - margin);
+            else if (visibleY + widget->height() > viewH - margin)
+                sv->setScrollOffset(sv->scrollX(),
+                                    wy + widget->height() - (viewH - margin));
+        }
+        cur = parent;
+    }
+}
+
+void Application::clearTouch()
+{
+    if (touch_.active && !touch_.scrolling && !touch_.selecting && !touch_.pendingPress)
+        cancelTouchPress();
+    touch_ = TouchGesture{};
+    inertia_.clear();
+}
+
+void Application::cancelTouchPress()
+{
+    Widget* pressed = pressedWidget_;
+    if (pressed)
+    {
+        MouseEvent me;
+        me.x = touch_.lastX - pressed->absoluteX();
+        me.y = touch_.lastY - pressed->absoluteY();
+        me.pointerType = PointerType::Touch;
+        if (pressed->onMouseUp)
+            pressed->onMouseUp(me);
+        if (pressedWidget_ == pressed)
+            pressedWidget_ = nullptr;
+    }
+    SDL_CaptureMouse(false);
+}
+
+void Application::dispatchTouchMouse(Uint32 type, int x, int y,
+                                     uint8_t button, uint8_t clicks)
+{
+    SDL_Event me;
+    SDL_zero(me);
+    me.type = type;
+
+    if (type == SDL_EVENT_MOUSE_MOTION)
+    {
+        me.motion.windowID = touch_.windowID;
+        me.motion.x = (float)x;
+        me.motion.y = (float)y;
+        me.motion.which = 0;
+    }
+    else
+    {
+        me.button.windowID = touch_.windowID;
+        me.button.x = (float)x;
+        me.button.y = (float)y;
+        me.button.button = button;
+        me.button.clicks = clicks;
+        me.button.which = 0;
+    }
+
+    pointerType_ = PointerType::Touch;
+    handleMouseEvent(me);
+    pointerType_ = PointerType::Mouse;
+}
+
+void Application::handleTouchEvent(const SDL_Event& ev)
+{
+    if (ev.type == SDL_EVENT_FINGER_CANCELED)
+    {
+        if (touch_.active && ev.tfinger.fingerID == touch_.finger)
+        {
+            cancelTouchPress();
+            clearTouch();
+        }
+        return;
+    }
+
+    Window* win = findWindowByID(ev.tfinger.windowID);
+    if (!win || !win->renderer() || !win->valid())
+        return;
+
+    int ww = 0, wh = 0;
+    SDL_GetWindowSize(win->handle(), &ww, &wh);
+    if (ww <= 0 || wh <= 0) return;
+
+    float wx = ev.tfinger.x * (float)ww;
+    float wy = ev.tfinger.y * (float)wh;
+    float rx = wx, ry = wy;
+    SDL_RenderCoordinatesFromWindow(win->renderer(), wx, wy, &rx, &ry);
+
+    int lx = (int)std::lround(rx);
+    int ly = (int)std::lround(ry);
+    Uint32 now = SDL_GetTicks();
+
+    if (ev.type == SDL_EVENT_FINGER_DOWN)
+    {
+        //Only track the primary finger; additional fingers are ignored for now.
+        if (touch_.active) return;
+
+        inertia_.clear();
+
+        touch_.active        = true;
+        touch_.pendingPress  = false;
+        touch_.selecting     = false;
+        touch_.scrolling     = false;
+        touch_.axisLocked    = false;
+        touch_.axisX         = false;
+        touch_.finger        = ev.tfinger.fingerID;
+        touch_.windowID      = ev.tfinger.windowID;
+        touch_.startX        = lx;
+        touch_.startY        = ly;
+        touch_.lastX         = lx;
+        touch_.lastY         = ly;
+        touch_.startTicks    = now;
+        touch_.lastMoveTicks = now;
+        touch_.velocityX     = 0.0f;
+        touch_.velocityY     = 0.0f;
+        touch_.target        = hitTest(&win->root(), lx, ly);
+        touch_.panTarget     = findPanTarget(touch_.target);
+
+        //Scrollable text views delay mouse-down so a swipe pans instead of
+        //starting a text selection. A long press starts selection.
+        if (touch_.target && touch_.panTarget &&
+            touch_.target->wantsLongPressSelection())
+        {
+            touch_.pendingPress = true;
+        }
+        else
+        {
+            dispatchTouchMouse(SDL_EVENT_MOUSE_BUTTON_DOWN, lx, ly,
+                               SDL_BUTTON_LEFT, 1);
+        }
+        return;
+    }
+
+    if (!touch_.active || ev.tfinger.fingerID != touch_.finger)
+        return;
+
+    if (ev.type == SDL_EVENT_FINGER_MOTION)
+    {
+        int dx = lx - touch_.startX;
+        int dy = ly - touch_.startY;
+        int slop = (win->touchMode() ? 10 : 8);
+
+        if (!touch_.scrolling && !touch_.selecting && !touch_.axisLocked &&
+            (std::abs(dx) > slop || std::abs(dy) > slop))
+        {
+            touch_.axisLocked = true;
+            touch_.axisX = std::abs(dx) > std::abs(dy);
+
+            if (touch_.panTarget && touch_.panTarget->canPan())
+            {
+                touch_.scrolling = true;
+                if (!touch_.pendingPress)
+                    cancelTouchPress();
+                touch_.pendingPress = false;
+            }
+            else if (touch_.pendingPress)
+            {
+                //The text view cannot scroll; start selection immediately.
+                touch_.pendingPress = false;
+                touch_.selecting = true;
+                dispatchTouchMouse(SDL_EVENT_MOUSE_BUTTON_DOWN,
+                                   touch_.startX, touch_.startY,
+                                   SDL_BUTTON_LEFT, 1);
+            }
+        }
+
+        if (touch_.scrolling)
+        {
+            int stepX = touch_.axisX ? (lx - touch_.lastX) : 0;
+            int stepY = touch_.axisX ? 0 : (ly - touch_.lastY);
+
+            if (stepX != 0 || stepY != 0)
+            {
+                touch_.panTarget->panBy(stepX, stepY);
+
+                Uint32 dtMs = now - touch_.lastMoveTicks;
+                if (dtMs > 0)
+                {
+                    float vx = (float)stepX / (float)dtMs;
+                    float vy = (float)stepY / (float)dtMs;
+                    touch_.velocityX = touch_.velocityX * 0.65f + vx * 0.35f;
+                    touch_.velocityY = touch_.velocityY * 0.65f + vy * 0.35f;
+                }
+            }
+            touch_.lastMoveTicks = now;
+        }
+        else if (touch_.selecting)
+        {
+            dispatchTouchMouse(SDL_EVENT_MOUSE_MOTION, lx, ly, 0, 0);
+        }
+        //pendingPress: wait for the long-press timer; movement within the
+        //slop threshold is intentionally ignored.
+
+        touch_.lastX = lx;
+        touch_.lastY = ly;
+        return;
+    }
+
+    if (ev.type == SDL_EVENT_FINGER_UP)
+    {
+        if (touch_.scrolling)
+        {
+            float speed = touch_.axisX ? touch_.velocityX : touch_.velocityY;
+            if (std::fabs(speed) > 0.12f && touch_.panTarget)
+            {
+                InertiaState st;
+                st.widget = touch_.panTarget;
+                st.vx = touch_.axisX ? touch_.velocityX : 0.0f;
+                st.vy = touch_.axisX ? 0.0f : touch_.velocityY;
+                st.lastTicks = now;
+                inertia_.push_back(st);
+            }
+        }
+        else if (touch_.selecting)
+        {
+            dispatchTouchMouse(SDL_EVENT_MOUSE_BUTTON_UP, lx, ly,
+                               SDL_BUTTON_LEFT, 1);
+        }
+        else if (touch_.pendingPress)
+        {
+            //Plain tap: deliver the delayed down/up pair.
+            dispatchTouchMouse(SDL_EVENT_MOUSE_BUTTON_DOWN,
+                               touch_.startX, touch_.startY,
+                               SDL_BUTTON_LEFT, 1);
+            dispatchTouchMouse(SDL_EVENT_MOUSE_BUTTON_UP, lx, ly,
+                               SDL_BUTTON_LEFT, 1);
+        }
+        else
+        {
+            dispatchTouchMouse(SDL_EVENT_MOUSE_BUTTON_UP, lx, ly,
+                               SDL_BUTTON_LEFT, 1);
+        }
+
+        touch_ = TouchGesture{};
+    }
+}
+
+void Application::updateTouch()
+{
+    if (!touch_.active || !touch_.pendingPress || touch_.scrolling ||
+        touch_.selecting)
+        return;
+
+    if (SDL_GetTicks() - touch_.startTicks >= 450)
+    {
+        touch_.pendingPress = false;
+        touch_.selecting = true;
+        dispatchTouchMouse(SDL_EVENT_MOUSE_BUTTON_DOWN,
+                           touch_.startX, touch_.startY,
+                           SDL_BUTTON_LEFT, 1);
+    }
+}
+
+void Application::updateInertia()
+{
+    if (inertia_.empty())
+        return;
+
+    Uint32 now = SDL_GetTicks();
+    for (std::size_t i = 0; i < inertia_.size();)
+    {
+        InertiaState& st = inertia_[i];
+        Uint32 dtMs = now - st.lastTicks;
+        st.lastTicks = now;
+        if (!st.widget || dtMs == 0)
+        {
+            ++i;
+            continue;
+        }
+
+        float dt = std::min(0.05f, (float)dtMs / 1000.0f);
+        st.restX += st.vx * (float)dtMs;
+        st.restY += st.vy * (float)dtMs;
+        int stepX = (int)st.restX;
+        int stepY = (int)st.restY;
+        st.restX -= (float)stepX;
+        st.restY -= (float)stepY;
+
+        bool moved = false;
+        if (stepX != 0 || stepY != 0)
+            moved = st.widget->panBy(stepX, stepY);
+
+        float decay = std::pow(0.05f, dt);
+        st.vx *= decay;
+        st.vy *= decay;
+
+        if (!moved || (std::fabs(st.vx) < 0.02f && std::fabs(st.vy) < 0.02f))
+            inertia_.erase(inertia_.begin() + (std::ptrdiff_t)i);
+        else
+            ++i;
+    }
+}
+
 void Application::widgetDestroyed(Widget* w)
 {
     if (auto* win = w->getWindow())
@@ -8486,6 +9322,17 @@ void Application::widgetDestroyed(Widget* w)
     if (focused_ == w)       focused_ = nullptr;
     if (hovered_ == w)       hovered_ = nullptr;
     if (pressedWidget_ == w) pressedWidget_ = nullptr;
+
+    if (touch_.target == w)
+        touch_.target = nullptr;
+    if (touch_.panTarget == w)
+        touch_ = TouchGesture{};
+
+    inertia_.erase(std::remove_if(inertia_.begin(), inertia_.end(),
+                                  [w](const InertiaState& st) {
+                                      return st.widget == w;
+                                  }),
+                   inertia_.end());
 }
 
 void Application::closePopups(Widget* w, int absX, int absY)
@@ -8540,6 +9387,11 @@ void Application::setFocus(Widget* w, bool fromKeyboard)
 
         if (isTextEditable(focused_))
         {
+            if (auto* oldTb = dynamic_cast<TextBox*>(focused_))
+                oldTb->clearComposition();
+            if (auto* oldTa = dynamic_cast<TextArea*>(focused_))
+                oldTa->clearComposition();
+
             if (auto* win = focused_->getWindow())
                 if (win->handle())
                     SDL_StopTextInput(win->handle());
@@ -8580,6 +9432,7 @@ void Application::setFocus(Widget* w, bool fromKeyboard)
                 if (win->handle())
                     SDL_StartTextInput(win->handle());
             }
+            ensureWidgetVisible(focused_);
             updateTextInputArea(focused_);
         }
     }
@@ -8591,6 +9444,7 @@ void Application::handleMouseEvent(const SDL_Event& ev)
     int    mx, my;
     uint8_t button = 0;
     uint8_t clicks = 0;
+    bool    isTouch = (pointerType_ == PointerType::Touch);
 
     if (ev.type == SDL_EVENT_MOUSE_MOTION)
     {
@@ -8704,6 +9558,7 @@ void Application::handleMouseEvent(const SDL_Event& ev)
             me.screenY = my;
             me.button  = button;
             me.clicks  = clicks;
+            me.pointerType = pointerType_;
 
             if (ev.type == SDL_EVENT_MOUSE_MOTION && win->menuBar_->onMouseMove)
                 win->menuBar_->onMouseMove(me);
@@ -8741,6 +9596,7 @@ void Application::handleMouseEvent(const SDL_Event& ev)
             me.screenY = my;
             me.button  = button;
             me.clicks  = clicks;
+            me.pointerType = pointerType_;
             if (pressed->onMouseUp) pressed->onMouseUp(me);
 
             //The callback may have destroyed the widget.
@@ -8765,6 +9621,7 @@ void Application::handleMouseEvent(const SDL_Event& ev)
         me.screenY = my;
         me.button  = button;
         me.clicks  = clicks;
+        me.pointerType = pointerType_;
         if (pressed->onMouseMove) pressed->onMouseMove(me);
         return;
     }
@@ -8777,10 +9634,11 @@ void Application::handleMouseEvent(const SDL_Event& ev)
         return;
     }
 
-    updateHovered(target);
+    if (!isTouch)
+        updateHovered(target);
 
     //onMouseEnter may have destroyed the widget.
-    if (hovered_ != target)
+    if (!isTouch && hovered_ != target)
         return;
 
     MouseEvent me;
@@ -8790,6 +9648,7 @@ void Application::handleMouseEvent(const SDL_Event& ev)
     me.screenY = my;
     me.button  = button;
     me.clicks  = clicks;
+    me.pointerType = pointerType_;
 
     switch (ev.type)
     {
@@ -8846,6 +9705,39 @@ void Application::handleKeyEvent(const SDL_Event& ev)
     Widget* focus = focused_;
     if (win) focus = win->focused_;
     if (!win && focus) win = focus->getWindow();
+
+    //Android back: close the topmost transient UI, then hide the IME, then
+    //give the application a chance to handle it (e.g. close a drawer).
+    if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_AC_BACK)
+    {
+        if (win && win->messageBox_ && win->messageBox_->isActive())
+        {
+            auto cb = std::move(win->messageBox_->onResult_);
+            win->messageBox_->dismiss();
+            if (cb) cb(MessageBoxResult::None);
+            win->requestRedraw();
+            return;
+        }
+        if (win && win->contextMenu_ && win->contextMenu_->isActive())
+        {
+            win->contextMenu_->dismiss();
+            win->requestRedraw();
+            return;
+        }
+        if (win && win->menuBar_ && win->menuBar_->isMenuOpen())
+        {
+            win->menuBar_->closeAll();
+            return;
+        }
+        if (win && win->handle() && SDL_TextInputActive(win->handle()))
+        {
+            stopTextInput(win);
+            return;
+        }
+        if (onBackPressed)
+            onBackPressed();
+        return;
+    }
 
     //Modal overlays consume keyboard input.
     if (win && (win->messageBox_ && win->messageBox_->isActive()))
