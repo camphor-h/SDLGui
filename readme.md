@@ -568,6 +568,8 @@ dd->onItemSelected = [](int index) { /* ... */ };
 | `setSelectedIndex(int)` | `void` | Set selected index |
 | `onItemSelected` | callback | Fired on selection |
 
+The expanded list is rendered as an overlay above all regular widgets, including siblings added later. Clicks inside the list take priority; clicking outside only dismisses the list without activating the widget underneath.
+
 #### ComboBox
 
 An editable text field with a dropdown list.
@@ -1177,13 +1179,12 @@ cv->onDraw = [](SDL_Renderer* r, const sdlgui::Rect& a)
 - TextArea has no undo/redo, syntax highlighting, or large-file buffer optimization yet; Tab focus traversal is opt-in
 - No grid layout, docking, or CSS-style flex; anchors, HBox/VBox and SplitView are the supported layout primitives
 - No fullscreen API; windows are windowed only
-- The built-in font is a fixed 16px bitmap; runtime `Font` objects can change metrics/drawing, but widget sizes are explicit and there is no automatic HiDPI/kerning/ligature handling
+- The built-in font is a fixed 16px bitmap; runtime `Font` objects can change metrics/drawing, and logical presentation handles HiDPI coordinates, but there is no automatic UI scaling/kerning/ligature handling
 - `Label` wrapping is character-level; `TextArea` uses word-aware wrapping
 - `RichTextView` has no inline images, collapsible blocks, or table row/column spanning yet
 - Legacy `setFontRenderer()` fonts are measured as 8px per character; use `setFont()` for real metrics
-- DropDown / ComboBox lists are drawn inside the widget, so a sibling added later and overlapping the open list can cover it
 - Redraw-on-demand is whole-window: no partial dirty rectangles
-- IME composition is handled by the OS; the library does not draw inline composition text, but reports the caret rect to `SDL_SetTextInputArea` so the candidate window follows the caret
+- Inline IME composition is drawn by TextBox/TextArea; the caret rect is also reported to `SDL_SetTextInputArea` so the candidate window follows it
 - No accessibility support
 - `SDLGUI_IMPLEMENTATION` must be defined in exactly one translation unit
 
@@ -1755,6 +1756,8 @@ dd->onItemSelected = [](int index) { /* ... */ };
 | `selectedIndex()` | `int` | 获取选中索引 |
 | `setSelectedIndex(int)` | `void` | 设置选中项 |
 | `onItemSelected` | 回调 | 选中时触发 |
+
+展开列表作为覆盖层绘制在所有普通控件之上，后添加的重叠兄弟控件也不会盖住它。点击列表优先响应；点击外部只关闭列表，不会误触下面的控件。
 
 #### ComboBox（组合框）
 
@@ -2366,13 +2369,12 @@ cv->onDraw = [](SDL_Renderer* r, const sdlgui::Rect& a)
 - TextArea 还没有撤销/重做、语法高亮和大文件缓冲优化；Tab 焦点遍历默认关闭
 - 无网格布局、停靠或 CSS 式 flex；布局原语为锚点、HBox/VBox 和 SplitView
 - 无全屏 API，只支持窗口模式
-- 内置字体是固定 16px 位图；运行时 `Font` 可以改变 metrics/绘制，但控件尺寸仍需显式设置，也没有自动 HiDPI/字距/连字处理
+- 内置字体是固定 16px 位图；运行时 `Font` 可以改变 metrics/绘制，逻辑分辨率会处理 HiDPI 坐标，但控件尺寸仍需显式设置，也没有自动 UI 缩放/字距/连字处理
 - `Label` 按字符换行；`TextArea` 使用单词级换行
 - `RichTextView` 还没有行内图片、可折叠 block，以及表格行列合并
 - 旧接口 `setFontRenderer()` 按每字符 8px 测量；需要真实 metrics 请用 `setFont()`
-- DropDown / ComboBox 的展开列表画在控件内部，后添加的重叠兄弟控件可能盖住它
 - 按需重绘是整窗级的，没有局部脏矩形
-- 输入法组合文本由系统绘制，库不绘制内联组合文本；但会把光标矩形传给 `SDL_SetTextInputArea`，让候选窗跟随光标
+- TextBox / TextArea 会绘制输入法内联预编辑文本；同时把光标矩形传给 `SDL_SetTextInputArea`，让候选窗跟随光标
 - 无无障碍支持
 - `SDLGUI_IMPLEMENTATION` 只能在一个编译单元中定义
 

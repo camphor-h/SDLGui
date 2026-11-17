@@ -423,6 +423,10 @@ public:
     //popups (DropDown / ComboBox)
     virtual bool isPopupOpen() const { return false; }
     virtual void closePopup() {}
+    //Called after the whole widget tree has rendered, so dropdown lists are
+    //not covered by later siblings. offX/offY compensate ScrollView scrolling.
+    virtual void renderPopupOverlay(SDL_Renderer* renderer, int offX, int offY)
+    { (void)renderer; (void)offX; (void)offY; }
 
     //dirty
     void  markDirty();
@@ -1095,6 +1099,7 @@ public:
     {
         if (expanded_) { expanded_ = false; listH_ = 0; markDirty(); }
     }
+    void renderPopupOverlay(SDL_Renderer* renderer, int offX, int offY) override;
 
     std::function<void(int)> onItemSelected;
 
@@ -1153,6 +1158,7 @@ public:
     {
         if (expanded_) { expanded_ = false; listH_ = 0; markDirty(); }
     }
+    void renderPopupOverlay(SDL_Renderer* renderer, int offX, int offY) override;
 
     std::function<void(int)>    onItemSelected;
     std::function<void(const std::string&)> onTextChanged;
@@ -1803,7 +1809,7 @@ private:
     void    updateTextInputArea(Widget* widget);
     void    ensureWidgetVisible(Widget* widget);
     void    widgetDestroyed(Widget* w);
-    void    closePopups(Widget* w, int absX, int absY);
+    bool    closePopups(Widget* w, int absX, int absY);
     void    processEvent(const SDL_Event& ev);
     void    handleMouseEvent(const SDL_Event& ev);
     void    handleTouchEvent(const SDL_Event& ev);
@@ -4880,40 +4886,47 @@ void DropDown::onRender(SDL_Renderer* renderer)
         detail::drawText(renderer, expanded_ ? "▲" : "▼", r.x + r.w - 14, r.y + 4, arrowColor_);
     }
 
-    //list
-    if (expanded_)
-    {
-        int ly = r.y + r.h;
-        int lh = (int)items_.size() * 20;
-        detail::ClipGuard listClip(renderer, r.x, ly, r.w, lh);
-
-        SDL_SetRenderDrawColor(renderer, popupColor_.r, popupColor_.g,
-                               popupColor_.b, popupColor_.a);
-        SDL_FRect listBg = { (float)r.x, (float)ly, (float)r.w, (float)lh };
-        SDL_RenderFillRect(renderer, &listBg);
-
-        for (int i = 0; i < (int)items_.size(); i++)
-        {
-            int iy = ly + i * 20;
-            if (i == selected_)
-            {
-                SDL_SetRenderDrawColor(renderer, selectionColor_.r, selectionColor_.g,
-                                       selectionColor_.b, selectionColor_.a);
-                SDL_FRect sel = { (float)r.x, (float)iy, (float)r.w, 20.0f };
-                SDL_RenderFillRect(renderer, &sel);
-            }
-            detail::drawText(renderer, items_[i].c_str(), r.x + 4, iy + 2, textColor_);
-        }
-
-        SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g,
-                               borderColor_.b, borderColor_.a);
-        SDL_RenderRect(renderer, &listBg);
-    }
+    //list is rendered later by renderPopupOverlay() so it is not covered by
+    //siblings that happen to be painted after this widget.
 
     for (auto& child : children_)
         child->onRender(renderer);
 
     dirty_ = false;
+}
+
+void DropDown::renderPopupOverlay(SDL_Renderer* renderer, int offX, int offY)
+{
+    if (!visible_ || !expanded_ || items_.empty()) return;
+
+    Rect r = absoluteRect();
+    int lx = r.x + offX;
+    int ly = r.y + r.h + offY;
+    int lh = (int)items_.size() * 20;
+
+    detail::ClipGuard listClip(renderer, lx, ly, r.w, lh);
+
+    SDL_SetRenderDrawColor(renderer, popupColor_.r, popupColor_.g,
+                           popupColor_.b, popupColor_.a);
+    SDL_FRect listBg = { (float)lx, (float)ly, (float)r.w, (float)lh };
+    SDL_RenderFillRect(renderer, &listBg);
+
+    for (int i = 0; i < (int)items_.size(); i++)
+    {
+        int iy = ly + i * 20;
+        if (i == selected_)
+        {
+            SDL_SetRenderDrawColor(renderer, selectionColor_.r, selectionColor_.g,
+                                   selectionColor_.b, selectionColor_.a);
+            SDL_FRect sel = { (float)lx, (float)iy, (float)r.w, 20.0f };
+            SDL_RenderFillRect(renderer, &sel);
+        }
+        detail::drawText(renderer, items_[i].c_str(), lx + 4, iy + 2, textColor_);
+    }
+
+    SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g,
+                           borderColor_.b, borderColor_.a);
+    SDL_RenderRect(renderer, &listBg);
 }
 
 //==============================================================================
@@ -5108,35 +5121,44 @@ void ComboBox::onRender(SDL_Renderer* renderer)
                            borderColor_.b, borderColor_.a);
     SDL_RenderRect(renderer, &border);
 
-    //list
-    if (expanded_)
-    {
-        int ly = r.y + r.h;
-        int lh = (int)items_.size() * 20;
-        detail::ClipGuard listClip(renderer, r.x, ly, r.w, lh);
-        SDL_FRect flc = { (float)r.x, (float)ly, (float)r.w, (float)lh };
-        SDL_SetRenderDrawColor(renderer, popupColor_.r, popupColor_.g,
-                               popupColor_.b, popupColor_.a);
-        SDL_RenderFillRect(renderer, &flc);
-        for (int i = 0; i < (int)items_.size(); i++)
-        {
-            int iy = ly + i * 20;
-            if (i == selected_)
-            {
-                SDL_SetRenderDrawColor(renderer, selectionColor_.r, selectionColor_.g,
-                                       selectionColor_.b, selectionColor_.a);
-                SDL_FRect sel = { (float)r.x, (float)iy, (float)r.w, 20.0f };
-                SDL_RenderFillRect(renderer, &sel);
-            }
-            detail::drawText(renderer, items_[i].c_str(), r.x + 4, iy + 2, textColor_);
-        }
-        SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g,
-                               borderColor_.b, borderColor_.a);
-        SDL_RenderRect(renderer, &flc);
-    }
+    //list is rendered later by renderPopupOverlay().
 
     for (auto& child : children_) child->onRender(renderer);
     dirty_ = false;
+}
+
+void ComboBox::renderPopupOverlay(SDL_Renderer* renderer, int offX, int offY)
+{
+    if (!visible_ || !expanded_ || items_.empty()) return;
+
+    Rect r = absoluteRect();
+    int lx = r.x + offX;
+    int ly = r.y + r.h + offY;
+    int lh = (int)items_.size() * 20;
+
+    detail::ClipGuard listClip(renderer, lx, ly, r.w, lh);
+
+    SDL_SetRenderDrawColor(renderer, popupColor_.r, popupColor_.g,
+                           popupColor_.b, popupColor_.a);
+    SDL_FRect flc = { (float)lx, (float)ly, (float)r.w, (float)lh };
+    SDL_RenderFillRect(renderer, &flc);
+
+    for (int i = 0; i < (int)items_.size(); i++)
+    {
+        int iy = ly + i * 20;
+        if (i == selected_)
+        {
+            SDL_SetRenderDrawColor(renderer, selectionColor_.r, selectionColor_.g,
+                                   selectionColor_.b, selectionColor_.a);
+            SDL_FRect sel = { (float)lx, (float)iy, (float)r.w, 20.0f };
+            SDL_RenderFillRect(renderer, &sel);
+        }
+        detail::drawText(renderer, items_[i].c_str(), lx + 4, iy + 2, textColor_);
+    }
+
+    SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g,
+                           borderColor_.b, borderColor_.a);
+    SDL_RenderRect(renderer, &flc);
 }
 
 //==============================================================================
@@ -8083,6 +8105,28 @@ void Window::setTheme(const Theme& theme)
     requestRedraw();
 }
 
+static void renderPopupOverlays(SDL_Renderer* renderer, Widget* w,
+                                int offX, int offY)
+{
+    if (!w || !w->visible()) return;
+
+    auto* sv = dynamic_cast<ScrollView*>(w);
+    for (auto& child : w->children())
+    {
+        int cx = offX;
+        int cy = offY;
+        if (sv)
+        {
+            cx -= sv->scrollX();
+            cy -= sv->scrollY();
+        }
+
+        renderPopupOverlays(renderer, child.get(), cx, cy);
+        if (child->visible() && child->isPopupOpen())
+            child->renderPopupOverlay(renderer, cx, cy);
+    }
+}
+
 void Window::render()
 {
     if (!sdlWindow_ || !renderer_ || !root_)
@@ -8229,6 +8273,8 @@ void Window::render()
     }
 
     //menu bar dropdown overlay (on top of all regular widgets)
+    renderPopupOverlays(renderer_, root_.get(), 0, 0);
+
     if (menuBar_)
         menuBar_->renderDropdownOverlay(renderer_);
 
@@ -8904,6 +8950,30 @@ Window* Application::findWindowByID(Uint32 id)
     return nullptr;
 }
 
+static Widget* hitPopupRecursive(Widget* w, int absX, int absY)
+{
+    if (!w || !w->visible() || !w->enabled()) return nullptr;
+
+    auto* sv = dynamic_cast<ScrollView*>(w);
+    for (auto it = w->children().rbegin(); it != w->children().rend(); ++it)
+    {
+        int cx = absX, cy = absY;
+        if (sv)
+        {
+            cx += sv->scrollX();
+            cy += sv->scrollY();
+        }
+
+        if (Widget* hit = hitPopupRecursive(it->get(), cx, cy))
+            return hit;
+    }
+
+    if (w->isPopupOpen() && w->hitTest(absX, absY))
+        return w;
+
+    return nullptr;
+}
+
 Widget* Application::hitTest(Widget* w, int absX, int absY)
 {
     if (!w || !w->visible())
@@ -8916,6 +8986,20 @@ Widget* Application::hitTest(Widget* w, int absX, int absY)
     auto* sv = dynamic_cast<ScrollView*>(w);
     if (sv && sv->hitTestScrollbar(absX, absY))
         return w;
+
+    //Open dropdown/combo lists are overlays: they win over any sibling that
+    //happens to be painted later.
+    for (auto it = w->children().rbegin(); it != w->children().rend(); ++it)
+    {
+        int cx = absX, cy = absY;
+        if (sv)
+        {
+            cx = absX + sv->scrollX();
+            cy = absY + sv->scrollY();
+        }
+        if (Widget* hit = hitPopupRecursive(it->get(), cx, cy))
+            return hit;
+    }
 
     //check children in reverse order (topmost first)
     for (auto it = w->children().rbegin(); it != w->children().rend(); ++it)
@@ -9335,15 +9419,32 @@ void Application::widgetDestroyed(Widget* w)
                    inertia_.end());
 }
 
-void Application::closePopups(Widget* w, int absX, int absY)
+bool Application::closePopups(Widget* w, int absX, int absY)
 {
-    if (!w) return;
+    if (!w) return false;
 
+    bool closed = false;
     if (w->isPopupOpen() && !w->hitTest(absX, absY))
+    {
         w->closePopup();
+        closed = true;
+    }
 
+    auto* sv = dynamic_cast<ScrollView*>(w);
     for (auto& child : w->children())
-        closePopups(child.get(), absX, absY);
+    {
+        int cx = absX;
+        int cy = absY;
+        if (sv)
+        {
+            cx += sv->scrollX();
+            cy += sv->scrollY();
+        }
+        if (closePopups(child.get(), cx, cy))
+            closed = true;
+    }
+
+    return closed;
 }
 
 void Application::setFocus(Widget* w, bool fromKeyboard)
@@ -9434,6 +9535,21 @@ void Application::setFocus(Widget* w, bool fromKeyboard)
             }
             ensureWidgetVisible(focused_);
             updateTextInputArea(focused_);
+        }
+    }
+}
+
+static void scrollOffsetForWidget(Widget* w, int& offX, int& offY)
+{
+    offX = 0;
+    offY = 0;
+    for (Widget* cur = w; cur; cur = cur->parent())
+    {
+        auto* sv = dynamic_cast<ScrollView*>(cur->parent());
+        if (sv)
+        {
+            offX += sv->scrollX();
+            offY += sv->scrollY();
         }
     }
 }
@@ -9579,7 +9695,17 @@ void Application::handleMouseEvent(const SDL_Event& ev)
         return;
 
     if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
-        closePopups(&win->root(), mx, my);
+    {
+        //A click outside an open dropdown/combobox only dismisses it; do not
+        //also activate whatever widget happens to sit underneath.
+        if (closePopups(&win->root(), mx, my))
+        {
+            SDL_CaptureMouse(false);
+            pressedWidget_ = nullptr;
+            win->requestRedraw();
+            return;
+        }
+    }
 
     //MOUSE_BUTTON_UP: always dispatch to pressedWidget_ regardless of hitTest
     if (ev.type == SDL_EVENT_MOUSE_BUTTON_UP)
@@ -9589,9 +9715,11 @@ void Application::handleMouseEvent(const SDL_Event& ev)
         Widget* pressed = pressedWidget_;
         if (pressed)
         {
+            int sox = 0, soy = 0;
+            scrollOffsetForWidget(pressed, sox, soy);
             MouseEvent me;
-            me.x       = mx - pressed->absoluteX();
-            me.y       = my - pressed->absoluteY();
+            me.x       = mx + sox - pressed->absoluteX();
+            me.y       = my + soy - pressed->absoluteY();
             me.screenX = mx;
             me.screenY = my;
             me.button  = button;
@@ -9614,9 +9742,11 @@ void Application::handleMouseEvent(const SDL_Event& ev)
     if (ev.type == SDL_EVENT_MOUSE_MOTION && pressedWidget_)
     {
         Widget* pressed = pressedWidget_;
+        int sox = 0, soy = 0;
+        scrollOffsetForWidget(pressed, sox, soy);
         MouseEvent me;
-        me.x       = mx - pressed->absoluteX();
-        me.y       = my - pressed->absoluteY();
+        me.x       = mx + sox - pressed->absoluteX();
+        me.y       = my + soy - pressed->absoluteY();
         me.screenX = mx;
         me.screenY = my;
         me.button  = button;
@@ -9642,8 +9772,10 @@ void Application::handleMouseEvent(const SDL_Event& ev)
         return;
 
     MouseEvent me;
-    me.x       = mx - target->absoluteX();
-    me.y       = my - target->absoluteY();
+    int sox = 0, soy = 0;
+    scrollOffsetForWidget(target, sox, soy);
+    me.x       = mx + sox - target->absoluteX();
+    me.y       = my + soy - target->absoluteY();
     me.screenX = mx;
     me.screenY = my;
     me.button  = button;
