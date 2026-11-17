@@ -707,7 +707,7 @@ Clicking the semi-transparent overlay (outside the dialog) returns `MessageBoxRe
 
 #### TextArea
 
-Multi-line editable text view (inherits ScrollView). Vertical and horizontal scrollbars are enabled by default. Supports selection, drag-select, Shift+click, clipboard and read-only mode.
+Multi-line editable text view (inherits ScrollView). Word wrap is **on by default**; a vertical scrollbar is shown as needed, and a horizontal scrollbar appears when wrapping is disabled. Supports selection, drag-select, Shift+click, clipboard and read-only mode.
 
 ```cpp
 auto* ta = root.addChild<sdlgui::TextArea>();
@@ -722,6 +722,9 @@ ta->setText("Line 1\nLine 2\nLine 3");
 | `setSelectionColor(Color)` | `void` | Set selection highlight color |
 | `setLineSpacing(int)` | `void` | Extra pixels between lines (0 = font default) |
 | `setLetterSpacing(int)` | `void` | Extra pixels between characters (0 = font default) |
+| `setWordWrap(bool)` | `void` | Enable/disable automatic wrapping (default `true`) |
+| `wordWrap()` | `bool` | Whether wrapping is enabled |
+| `setShowLineNumbers(bool)` | `void` | Show a line-number gutter |
 | `setAutoIndent(bool)` | `void` | Enter copies the current line's indentation; adds a level after `{`, `[` or `(` |
 | `setSmartBackspace(bool)` | `void` | Backspace inside leading whitespace removes a whole soft-tab stop |
 | `setIndentWithSpaces(bool)` | `void` | Auto-indent uses spaces (`true`) or tabs (`false`) |
@@ -739,6 +742,8 @@ ta->setText("Line 1\nLine 2\nLine 3");
 | `moveCursorLeft/Right/Up/Down/Home/End(bool select = false)` | `void` | Move the caret; `true` extends the selection |
 
 **Keyboard controls:** Shift+arrows/Home/End extends selection; Ctrl+A selects all; Ctrl+C/Ctrl+X copy/cut; Ctrl+V pastes and replaces the selection; Enter inserts a newline (with auto-indent when enabled). Mouse drag or Shift+click also selects.
+
+Word wrap breaks at spaces/tabs and common punctuation when possible; CJK text falls back to character wrapping. `setWordWrap(false)` restores horizontal scrolling. Cursor positions still use logical line/byte-column coordinates.
 
 Line and letter spacing are TextArea-only adjustments:
 
@@ -1803,7 +1808,7 @@ sdlgui::MessageBoxResult r = win.showMessageBoxBlocking(
 
 #### TextArea（多行文本）
 
-多行可编辑文本（继承 ScrollView），默认启用垂直和水平滚动条。支持选择区、拖动选择、Shift+点击、剪贴板和只读模式。
+多行可编辑文本（继承 ScrollView）。**默认开启自动换行**；需要时显示垂直滚动条，关闭换行后才启用水平滚动条。支持选择区、拖动选择、Shift+点击、剪贴板和只读模式。
 
 ```cpp
 auto* ta = root.addChild<sdlgui::TextArea>();
@@ -1818,6 +1823,9 @@ ta->setText("第一行\n第二行\n第三行");
 | `setSelectionColor(Color)` | `void` | 设置选择区背景色 |
 | `setLineSpacing(int)` | `void` | 行间额外像素（0 = 字体默认行高） |
 | `setLetterSpacing(int)` | `void` | 字符间额外像素（0 = 字体默认字距） |
+| `setWordWrap(bool)` | `void` | 开启/关闭自动换行（默认 `true`） |
+| `wordWrap()` | `bool` | 当前是否自动换行 |
+| `setShowLineNumbers(bool)` | `void` | 显示行号栏 |
 | `setAutoIndent(bool)` | `void` | 换行时沿用当前行缩进；行尾为 `{`、`[`、`(` 时增加一级 |
 | `setSmartBackspace(bool)` | `void` | 在行首空白中按退格可一次删除一个软 Tab 宽度 |
 | `setIndentWithSpaces(bool)` | `void` | 自动缩进使用空格（`true`）或制表符（`false`） |
@@ -1835,6 +1843,8 @@ ta->setText("第一行\n第二行\n第三行");
 | `moveCursorLeft/Right/Up/Down/Home/End(bool select = false)` | `void` | 移动光标；`true` 扩展选择区 |
 
 **键盘控制：** Shift+方向键/Home/End 扩展选择区；Ctrl+A 全选；Ctrl+C/Ctrl+X 复制/剪切；Ctrl+V 粘贴并替换选择区；Enter 插入换行（启用自动缩进时沿用当前缩进）。鼠标拖动或 Shift+点击也可选择。
+
+自动换行会优先在空格、Tab 和常见标点处断行；中文等无空格文本按字符断行。`setWordWrap(false)` 恢复水平滚动。光标位置仍然使用逻辑行和字节列坐标。
 
 行距和字距是 TextArea 专用设置：
 

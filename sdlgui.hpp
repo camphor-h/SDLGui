@@ -1218,6 +1218,8 @@ public:
     void     setSelectionColor(Color color);
     void     setLineSpacing(int px);   //extra pixels between lines
     void     setLetterSpacing(int px); //extra pixels between characters
+    void     setWordWrap(bool wrap);
+    bool     wordWrap() const { return wordWrap_; }
     void     setShowLineNumbers(bool on) { showLineNumbers_ = on; refreshLayout(); markDirty(); }
     void     setAutoIndent(bool on) { autoIndent_ = on; }
     void     setSmartBackspace(bool on) { smartBackspace_ = on; }
@@ -1274,6 +1276,7 @@ public:
 protected:
     void onRender(SDL_Renderer* renderer) override;
     void onFontChanged() override;
+    void layoutChildren() override;
 
 private:
     friend class Application;
@@ -1285,6 +1288,7 @@ private:
     Color       borderColor_ = Color(70, 70, 75);
     int         lineSpacing_ = 0;
     int         letterSpacing_ = 0;
+    bool        wordWrap_ = true;
     bool        showLineNumbers_ = false;
     bool        autoIndent_ = false;
     bool        smartBackspace_ = false;
@@ -1315,6 +1319,26 @@ private:
     int         lineNumberGutterWidth() const;
     void        drawLine(SDL_Renderer* renderer, const std::string& line,
                          int x, int y, Color color) const;
+
+    struct VisualLine
+    {
+        int line = 0;
+        int start = 0;
+        int end = 0;
+    };
+
+    void invalidateVisual();
+    void buildVisualLines() const;
+    int  visualRowForCursor() const;
+
+    mutable std::vector<VisualLine> visualLines_;
+    mutable bool     visualDirty_ = true;
+    mutable int      visualWidth_ = -1;
+    mutable int      visualGutter_ = -1;
+    mutable uint64_t visualFontEpoch_ = 0;
+    mutable int      visualLetterSpacing_ = 0;
+    mutable int      visualLineSpacing_ = 0;
+    mutable bool     visualWrap_ = true;
 };
 
 //==============================================================================
@@ -4820,6 +4844,12 @@ TextArea::TextArea(Widget* parent)
     };
 }
 
+void TextArea::layoutChildren()
+{
+    Widget::layoutChildren();
+    refreshLayout();
+}
+
 void TextArea::setText(const std::string& text)
 {
     text_ = text;
@@ -4829,6 +4859,7 @@ void TextArea::setText(const std::string& text)
     selAnchorCol_  = -1;
     mouseSelecting_ = false;
     cursorVisible_ = false;
+    visualDirty_ = true;
     clampCursor();
     refreshLayout();
 }
@@ -4842,11 +4873,20 @@ void TextArea::setSelectionColor(Color color) { selColor_ = color; markDirty(); 
 void TextArea::setLineSpacing(int px)
 {
     lineSpacing_ = px;
+    visualDirty_ = true;
     refreshLayout();
 }
 void TextArea::setLetterSpacing(int px)
 {
     letterSpacing_ = px;
+    visualDirty_ = true;
+    refreshLayout();
+}
+void TextArea::setWordWrap(bool wrap)
+{
+    if (wordWrap_ == wrap) return;
+    wordWrap_ = wrap;
+    visualDirty_ = true;
     refreshLayout();
 }
 
@@ -4932,6 +4972,7 @@ bool TextArea::deleteSelection()
     selAnchorCol_  = -1;
     mouseSelecting_ = false;
     cursorTick_ = SDL_GetTicks();
+    visualDirty_ = true;
     refreshLayout();
     return true;
 }
@@ -4990,8 +5031,8 @@ std::size_t TextArea::offsetAt(int line, int col) const
 
 void TextArea::lineColAt(int localX, int localY, int& line, int& col) const
 {
-    auto lines = splitLines();
-    if (lines.empty())
+    buildVisualLines();
+    if (visualLines_.empty())
     {
         line = 0;
         col = 0;
@@ -4999,17 +5040,22 @@ void TextArea::lineColAt(int localX, int localY, int& line, int& col) const
     }
 
     int lineH = lineHeight();
-    line = (localY + scrollY_) / lineH;
-    if (line < 0) line = 0;
-    if (line >= (int)lines.size()) line = (int)lines.size() - 1;
+    int row = (localY + scrollY_) / lineH;
+    if (row < 0) row = 0;
+    if (row >= (int)visualLines_.size()) row = (int)visualLines_.size() - 1;
 
+    const VisualLine& v = visualLines_[row];
+    line = v.line;
+
+    auto lines = splitLines();
     const std::string& ln = lines[line];
     int targetX = localX + scrollX_ - lineNumberGutterWidth() - 4;
     if (targetX < 0) targetX = 0;
+
     int x = 0;
     int chars = 0;
-    col = 0;
-    while (col < (int)ln.size())
+    col = v.start;
+    while (col < v.end)
     {
         const char* prev = ln.c_str() + col;
         const char* p = prev;
@@ -5083,6 +5129,133 @@ int TextArea::lineWidth(const std::string& line) const
     return prefixWidth(line, (int)line.size());
 }
 
+void TextArea::invalidateVisual()
+{
+    visualDirty_ = true;
+    markDirty();
+}
+
+void TextArea::buildVisualLines() const
+{
+    int gutter = lineNumberGutterWidth();
+    if (!visualDirty_ &&
+        visualWidth_ == width_ &&
+        visualGutter_ == gutter &&
+        visualFontEpoch_ == fontEpoch() &&
+        visualLetterSpacing_ == letterSpacing_ &&
+        visualLineSpacing_ == lineSpacing_ &&
+        visualWrap_ == wordWrap_)
+        return;
+
+    visualLines_.clear();
+    auto lines = splitLines();
+    visualLines_.reserve(lines.size());
+
+    if (!wordWrap_)
+    {
+        for (int i = 0; i < (int)lines.size(); ++i)
+            visualLines_.push_back({ i, 0, (int)lines[i].size() });
+    }
+    else
+    {
+        int avail = std::max(1, width_ - gutter - 18);
+        for (int i = 0; i < (int)lines.size(); ++i)
+        {
+            const std::string& ln = lines[i];
+            int size = (int)ln.size();
+            if (size == 0)
+            {
+                visualLines_.push_back({ i, 0, 0 });
+                continue;
+            }
+
+            int start = 0;
+            while (start < size)
+            {
+                int col = start;
+                int w = 0;
+                int chars = 0;
+                int lastBreak = -1;
+
+                while (col < size)
+                {
+                    const char* prev = ln.c_str() + col;
+                    const char* p = prev;
+                    uint32_t cp = detail::decodeUTF8(p);
+                    int next = (int)(p - ln.c_str());
+                    int gap = (chars > 0) ? letterSpacing_ : 0;
+                    int cw = glyphAdvance(cp);
+
+                    if (chars > 0 && w + gap + cw > avail)
+                        break;
+
+                    w += gap + cw;
+                    col = next;
+                    ++chars;
+
+                    if (cp == ' ' || cp == '\t' || cp == '-' || cp == '/')
+                        lastBreak = col;
+                }
+
+                int end = size;
+                if (col < size)
+                    end = (lastBreak > start) ? lastBreak : col;
+                if (end <= start)
+                {
+                    const char* p = ln.c_str() + start;
+                    detail::decodeUTF8(p);
+                    end = (int)(p - ln.c_str());
+                }
+                if (end > size) end = size;
+
+                visualLines_.push_back({ i, start, end });
+                start = end;
+            }
+        }
+    }
+
+    visualWidth_ = width_;
+    visualGutter_ = gutter;
+    visualFontEpoch_ = fontEpoch();
+    visualLetterSpacing_ = letterSpacing_;
+    visualLineSpacing_ = lineSpacing_;
+    visualWrap_ = wordWrap_;
+    visualDirty_ = false;
+}
+
+int TextArea::visualRowForCursor() const
+{
+    buildVisualLines();
+    if (visualLines_.empty()) return 0;
+
+    int best = -1;
+    for (int i = 0; i < (int)visualLines_.size(); ++i)
+    {
+        const VisualLine& v = visualLines_[i];
+        if (v.line != cursorLine_) continue;
+
+        if (cursorCol_ >= v.start && cursorCol_ <= v.end)
+        {
+            best = i;
+            //Prefer the next visual row when the caret sits exactly on a wrap boundary.
+            if (cursorCol_ < v.end) break;
+            if (i + 1 < (int)visualLines_.size() &&
+                visualLines_[i + 1].line == v.line &&
+                visualLines_[i + 1].start == v.end)
+                continue;
+            break;
+        }
+    }
+
+    if (best < 0)
+    {
+        for (int i = 0; i < (int)visualLines_.size(); ++i)
+            if (visualLines_[i].line == cursorLine_) return i;
+        return 0;
+    }
+    return best;
+}
+
 void TextArea::drawLine(SDL_Renderer* renderer, const std::string& line,
                         int x, int y, Color color) const
 {
@@ -5110,14 +5283,22 @@ void TextArea::drawLine(SDL_Renderer* renderer, const std::string& line,
 
 void TextArea::refreshLayout()
 {
-    auto lines = splitLines();
+    buildVisualLines();
     int gutter = lineNumberGutterWidth();
     int maxW = width_;
-    for (auto& l : lines)
-        maxW = std::max(maxW, gutter + lineWidth(l) + 8);
+    if (!wordWrap_)
+    {
+        auto lines = splitLines();
+        for (auto& l : lines)
+            maxW = std::max(maxW, gutter + lineWidth(l) + 8);
+    }
 
     int lineH = lineHeight();
-    setContentSize(maxW, (int)lines.size() * lineH);
+    if (wordWrap_)
+        scrollX_ = 0;
+
+    setContentSize(wordWrap_ ? width_ : maxW,
+                   (int)visualLines_.size() * lineH);
     clampCursor();
     ensureCursorVisible();
     markDirty();
@@ -5130,13 +5311,21 @@ void TextArea::ensureCursorVisible()
     if (cursorLine_ < 0) cursorLine_ = 0;
     if (cursorLine_ >= (int)lines.size()) cursorLine_ = (int)lines.size() - 1;
 
-    int lineH  = lineHeight();
-    int top    = cursorLine_ * lineH;
+    buildVisualLines();
+    int row = visualRowForCursor();
+    int lineH = lineHeight();
+    int top = row * lineH;
     int bottom = top + lineH;
     if (top < scrollY_)
         setScrollOffset(scrollX_, top);
     else if (bottom > scrollY_ + height_)
         setScrollOffset(scrollX_, bottom - height_);
+
+    if (wordWrap_)
+    {
+        setScrollOffset(0, scrollY_);
+        return;
+    }
 
     int cx = lineNumberGutterWidth() + 4 +
              prefixWidth(lines[cursorLine_], cursorCol_);
@@ -5188,6 +5377,7 @@ void TextArea::insertText(const std::string& text)
     selAnchorCol_  = -1;
     cursorVisible_ = true;
     cursorTick_ = SDL_GetTicks();
+    visualDirty_ = true;
     refreshLayout();
 }
 
@@ -5239,6 +5429,7 @@ void TextArea::backspace()
     if (readOnly_) return;
     if (deleteSelection()) return;
 
+    visualDirty_ = true;
     clampCursor();
     if (cursorCol_ > 0)
     {
@@ -5310,6 +5501,7 @@ void TextArea::deleteForward()
     if (readOnly_) return;
     if (deleteSelection()) return;
 
+    visualDirty_ = true;
     clampCursor();
     auto lines = splitLines();
     const std::string& ln = lines[cursorLine_];
@@ -5580,9 +5772,12 @@ bool TextArea::textInputRect(Rect& rect) const
 
     int lineH = lineHeight();
     Rect r = absoluteRect();
+    buildVisualLines();
+    int row = visualRowForCursor();
+    const VisualLine& v = visualLines_[row];
     int cx = r.x + lineNumberGutterWidth() + 4 - scrollX_ +
-             prefixWidth(lines[line], col);
-    int cy = r.y + line * lineH - scrollY_;
+             prefixWidth(lines[line], col) - prefixWidth(lines[line], v.start);
+    int cy = r.y + row * lineH - scrollY_;
     rect = { cx, cy, 1, lineH };
     return true;
 }
@@ -5615,53 +5810,72 @@ void TextArea::onRender(SDL_Renderer* renderer)
     int maxW = 0;
     int lineH = lineHeight();
     int gutter = lineNumberGutterWidth();
+    buildVisualLines();
 
     bool sel = hasSelection();
     int selSL = 0, selSC = 0, selEL = 0, selEC = 0;
     if (sel)
         selectionBounds(selSL, selSC, selEL, selEC);
 
-    for (int i = 0; i < (int)lines.size(); i++)
+    for (int row = 0; row < (int)visualLines_.size(); ++row)
     {
-        int ly = r.y + i * lineH - scrollY_;
+        const VisualLine& v = visualLines_[row];
+        const std::string& ln = lines[v.line];
+
+        int ly = r.y + row * lineH - scrollY_;
         if (ly + lineH < r.y || ly > r.y + r.h) continue;  //skip offscreen
 
-        if (sel && i >= selSL && i <= selEL)
+        if (sel && v.line >= selSL && v.line <= selEL)
         {
-            const std::string& ln = lines[i];
-            int c0 = (i == selSL) ? selSC : 0;
-            int c1 = (i == selEL) ? selEC : (int)ln.size();
-            if (c1 < c0) c1 = c0;
+            int c0 = v.start;
+            int c1 = v.end;
+            if (v.line == selSL) c0 = std::max(c0, selSC);
+            if (v.line == selEL) c1 = std::min(c1, selEC);
 
-            int x0 = r.x + gutter + 4 - scrollX_ + prefixWidth(ln, c0);
-            int x1 = r.x + gutter + 4 - scrollX_ + prefixWidth(ln, c1);
-            if (x1 == x0) x1 = x0 + 4; //empty line / newline marker
+            if (c1 > c0)
+            {
+                int x0 = r.x + gutter + 4 - scrollX_ + prefixWidth(ln, c0) -
+                         prefixWidth(ln, v.start);
+                int x1 = r.x + gutter + 4 - scrollX_ + prefixWidth(ln, c1) -
+                         prefixWidth(ln, v.start);
 
-            SDL_FRect selr = { (float)x0, (float)ly, (float)(x1 - x0), (float)lineH };
-            SDL_SetRenderDrawColor(renderer,
-                selColor_.r, selColor_.g, selColor_.b, selColor_.a);
-            SDL_RenderFillRect(renderer, &selr);
+                SDL_FRect selr = { (float)x0, (float)ly, (float)(x1 - x0), (float)lineH };
+                SDL_SetRenderDrawColor(renderer,
+                    selColor_.r, selColor_.g, selColor_.b, selColor_.a);
+                SDL_RenderFillRect(renderer, &selr);
+            }
         }
 
-        drawLine(renderer, lines[i], r.x + gutter + 4 - scrollX_, ly, textColor_);
+        if (v.end > v.start)
+        {
+            std::string segment = ln.substr((std::size_t)v.start,
+                                            (std::size_t)(v.end - v.start));
+            drawLine(renderer, segment,
+                     r.x + gutter + 4 - scrollX_, ly, textColor_);
+        }
 
-        int lw = gutter + lineWidth(lines[i]);
-        if (lw > maxW) maxW = lw;
+        if (!wordWrap_)
+        {
+            int lw = gutter + lineWidth(ln);
+            if (lw > maxW) maxW = lw;
+        }
     }
 
     //cursor
-    if (cursorVisible_ && cursorLine_ >= 0 && cursorLine_ < (int)lines.size())
+    if (cursorVisible_ && !visualLines_.empty())
     {
         uint32_t elapsed = SDL_GetTicks() - cursorTick_;
         if ((elapsed / 500) % 2 == 0)
         {
+            int row = visualRowForCursor();
+            const VisualLine& v = visualLines_[row];
+            const std::string& ln = lines[v.line];
             int col = cursorCol_;
-            if (col > (int)lines[cursorLine_].size())
-                col = (int)lines[cursorLine_].size();
+            if (col > (int)ln.size()) col = (int)ln.size();
 
             int cx = r.x + gutter + 4 - scrollX_ +
-                     prefixWidth(lines[cursorLine_], col);
-            int cy = r.y + cursorLine_ * lineH - scrollY_;
+                     prefixWidth(ln, col) - prefixWidth(ln, v.start);
+            int cy = r.y + row * lineH - scrollY_;
             if (cy + lineH >= r.y && cy <= r.y + r.h)
             {
                 SDL_SetRenderDrawColor(renderer, cursorColor_.r, cursorColor_.g,
@@ -5690,24 +5904,28 @@ void TextArea::onRender(SDL_Renderer* renderer)
                        (float)(r.x + gutter - 1), (float)(r.y + r.h));
 
         int first = std::max(0, scrollY_ / lineH);
-        int last = std::min((int)lines.size(),
+        int last = std::min((int)visualLines_.size(),
                             (scrollY_ + r.h) / lineH + 1);
         Color numberColor = getWindow()
             ? getWindow()->theme().mutedText
             : Color(115, 120, 130);
-        for (int i = first; i < last; ++i)
+        for (int row = first; row < last; ++row)
         {
-            std::string num = std::to_string(i + 1);
+            const VisualLine& v = visualLines_[row];
+            if (v.start != 0)
+                continue; //only the first visual row of a logical line gets a number
+
+            std::string num = std::to_string(v.line + 1);
             int nw = detail::textWidth(num.c_str());
             int nx = r.x + gutter - 8 - nw;
-            int ny = r.y + i * lineH - scrollY_;
+            int ny = r.y + row * lineH - scrollY_;
             detail::drawText(renderer, num.c_str(), nx, ny, numberColor);
         }
     }
 
     //update content size (grow and shrink with the viewport/font)
-    int totalH = (int)lines.size() * lineH;
-    int newW = std::max(width_, maxW + 8);
+    int totalH = (int)visualLines_.size() * lineH;
+    int newW = wordWrap_ ? width_ : std::max(width_, maxW + 8);
     int newH = std::max(height_, totalH);
     if (newW != contentW_ || newH != contentH_)
         setContentSize(newW, newH);
