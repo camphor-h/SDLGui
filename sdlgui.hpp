@@ -8,6 +8,7 @@
 #include <functional>
 #include <unordered_map>
 #include <cstdint>
+#include <cstddef>
 #include <cstring>
 #include <cmath>
 #include <cctype>
@@ -1602,6 +1603,22 @@ public:
     void     setTitleTextColor(Color color);
     void     setTitleButtonColors(Color normal, Color hover);
     void     setTitleCloseColor(Color color);
+
+    //Custom titlebar icon. Texture/surface setters take ownership.
+    void     setTitleIconTexture(SDL_Texture* texture);
+    bool     setTitleIconSurface(SDL_Surface* surface);
+    bool     setTitleIconMemory(const void* data, std::size_t size);
+    bool     setTitleIconPixels(int width, int height, const uint32_t* rgba);
+    void     clearTitleIcon();
+    bool     hasTitleIcon() const { return titleIconTexture_ != nullptr; }
+    void     setTitleIconSize(int px);          //0 = auto (titleBarHeight - 10)
+    int      titleIconSize() const { return titleIconSize_; }
+    void     setTitleIconPadding(int left, int gap);
+    std::function<void()> onTitleIconClick;
+
+    //OS window icon (taskbar/dock). Does not take ownership of surface.
+    bool     setWindowIconSurface(SDL_Surface* surface);
+    bool     setWindowIconMemory(const void* data, std::size_t size);
     void     setTheme(const Theme& theme);
     void     setResizable(bool resiz);
     void     requestRedraw() { redraw_ = true; }
@@ -1659,6 +1676,15 @@ private:
     Color         titleCloseColor_ = Color(180, 30, 30);
     TitleBarMode  titleBarMode_    = TitleBarMode::System;
     int           titleBarHeight_  = 0;
+    SDL_Texture*  titleIconTexture_ = nullptr;
+    SDL_Surface*  titleIconSurface_ = nullptr;
+    int           titleIconTexW_   = 0;
+    int           titleIconTexH_   = 0;
+    int           titleIconSize_   = 0;
+    int           titleIconLeft_   = 6;
+    int           titleIconGap_    = 8;
+    bool          titleIconHover_  = false;
+    bool          pressedTitleIcon_ = false;
     int           clientWidth_     = 800;
     int           clientHeight_    = 600;
     bool          resizable_       = true;
@@ -1686,6 +1712,8 @@ private:
     void applyPresentation();
     void updateSafeArea();
     void layoutRoot();
+    Rect titleIconRect() const;
+    void ensureTitleIconTexture();
     bool handleTitleBarEvent(const SDL_Event& ev, int mx, int my);
     void forgetWidget(Widget* w);
     bool anyContinuousRedraw(Widget* w) const;
@@ -7609,6 +7637,36 @@ bool ScrollView::hitTest(int absX, int absY) const
 //==============================================================================
 // Window
 //==============================================================================
+static SDL_Surface* loadIconSurfaceFromMemory(const void* data, std::size_t size)
+{
+    if (!data || size < 2) return nullptr;
+
+    const unsigned char* bytes = static_cast<const unsigned char*>(data);
+
+    //PNG signature
+    static const unsigned char pngSig[8] =
+        { 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A };
+    if (size >= 8 && std::memcmp(bytes, pngSig, 8) == 0)
+    {
+        SDL_IOStream* io = SDL_IOFromConstMem(data, size);
+        return io ? SDL_LoadPNG_IO(io, true) : nullptr;
+    }
+
+    //BMP signature
+    if (bytes[0] == 'B' && bytes[1] == 'M')
+    {
+        SDL_IOStream* io = SDL_IOFromConstMem(data, size);
+        return io ? SDL_LoadBMP_IO(io, true) : nullptr;
+    }
+
+#ifdef SDLGUI_USE_SDL_IMAGE
+    SDL_IOStream* io = SDL_IOFromConstMem(data, size);
+    return io ? IMG_Load_IO(io, true) : nullptr;
+#else
+    return nullptr;
+#endif
+}
+
 Window::Window(const char* title, int w, int h, TitleBarMode mode)
 {
     title_          = title ? title : "";
@@ -7703,6 +7761,7 @@ Window::~Window()
     root_.reset();
     contextMenu_.reset();
     messageBox_.reset();
+    clearTitleIcon();
 
     if (renderer_)
     {
@@ -7944,9 +8003,20 @@ bool Window::handleTitleBarEvent(const SDL_Event& ev, int mx, int my)
     int maxX   = resizable_ ? (clientWidth_ - bsz * 2) : -1;
     int clsX   = clientWidth_ - bsz;
 
+    ensureTitleIconTexture();
+    Rect ib = titleIconRect();
+    bool overIcon = ib.w > 0 && (bool)onTitleIconClick &&
+                    mx >= ib.x && mx < ib.x + ib.w &&
+                    my >= ib.y && my < ib.y + ib.h;
+
     //hover tracking
     if (ev.type == SDL_EVENT_MOUSE_MOTION)
     {
+        bool oldIconHover = titleIconHover_;
+        titleIconHover_ = overIcon;
+        if (oldIconHover != titleIconHover_)
+            redraw_ = true;
+
         int oldHover = hoveredBtn_;
         hoveredBtn_ = 0;
         if (my >= 0 && my < bh && mx >= minX)
@@ -7970,6 +8040,12 @@ bool Window::handleTitleBarEvent(const SDL_Event& ev, int mx, int my)
     {
         SDL_CaptureMouse(true);
         redraw_ = true;
+
+        if (overIcon)
+        {
+            pressedTitleIcon_ = true;
+            return true;
+        }
 
         if (mx >= minX)
         {
@@ -8014,6 +8090,18 @@ bool Window::handleTitleBarEvent(const SDL_Event& ev, int mx, int my)
         dragging_ = false;
         SDL_CaptureMouse(false);
         redraw_ = true;
+
+        if (pressedTitleIcon_)
+        {
+            pressedTitleIcon_ = false;
+            titleIconHover_ = overIcon;
+            if (overIcon)
+            {
+                auto cb = onTitleIconClick;
+                if (cb) cb();
+            }
+            return true;
+        }
 
         if (pressedTitleBtn_ != 0)
         {
@@ -8087,6 +8175,159 @@ void Window::setTitleCloseColor(Color color)
 {
     titleCloseColor_ = color;
     redraw_ = true;
+}
+
+void Window::clearTitleIcon()
+{
+    if (titleIconTexture_)
+    {
+        SDL_DestroyTexture(titleIconTexture_);
+        titleIconTexture_ = nullptr;
+    }
+    if (titleIconSurface_)
+    {
+        SDL_DestroySurface(titleIconSurface_);
+        titleIconSurface_ = nullptr;
+    }
+    titleIconTexW_ = 0;
+    titleIconTexH_ = 0;
+    titleIconHover_ = false;
+    pressedTitleIcon_ = false;
+    redraw_ = true;
+}
+
+void Window::setTitleIconTexture(SDL_Texture* texture)
+{
+    if (titleIconTexture_)
+        SDL_DestroyTexture(titleIconTexture_);
+    if (titleIconSurface_)
+    {
+        SDL_DestroySurface(titleIconSurface_);
+        titleIconSurface_ = nullptr;
+    }
+
+    titleIconTexture_ = texture;
+    titleIconTexW_ = 0;
+    titleIconTexH_ = 0;
+    if (texture)
+    {
+        float tw = 0.f, th = 0.f;
+        if (SDL_GetTextureSize(texture, &tw, &th))
+        {
+            titleIconTexW_ = (int)tw;
+            titleIconTexH_ = (int)th;
+        }
+    }
+    redraw_ = true;
+}
+
+bool Window::setTitleIconSurface(SDL_Surface* surface)
+{
+    if (!surface) return false;
+
+    if (titleIconTexture_)
+    {
+        SDL_DestroyTexture(titleIconTexture_);
+        titleIconTexture_ = nullptr;
+    }
+    if (titleIconSurface_)
+        SDL_DestroySurface(titleIconSurface_);
+
+    titleIconSurface_ = surface;
+    ensureTitleIconTexture();
+    return titleIconTexture_ != nullptr;
+}
+
+bool Window::setTitleIconMemory(const void* data, std::size_t size)
+{
+    SDL_Surface* surface = loadIconSurfaceFromMemory(data, size);
+    if (!surface) return false;
+    return setTitleIconSurface(surface);
+}
+
+bool Window::setTitleIconPixels(int width, int height, const uint32_t* rgba)
+{
+    if (width <= 0 || height <= 0 || !rgba) return false;
+
+    SDL_Surface* surface = SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGBA32);
+    if (!surface) return false;
+
+    if (!SDL_ConvertPixels(width, height,
+                           SDL_PIXELFORMAT_RGBA32, rgba, width * 4,
+                           SDL_PIXELFORMAT_RGBA32, surface->pixels, surface->pitch))
+    {
+        SDL_DestroySurface(surface);
+        return false;
+    }
+
+    return setTitleIconSurface(surface);
+}
+
+void Window::setTitleIconSize(int px)
+{
+    if (px < 0) px = 0;
+    if (titleIconSize_ == px) return;
+    titleIconSize_ = px;
+    redraw_ = true;
+}
+
+void Window::setTitleIconPadding(int left, int gap)
+{
+    if (left < 0) left = 0;
+    if (gap < 0) gap = 0;
+    titleIconLeft_ = left;
+    titleIconGap_ = gap;
+    redraw_ = true;
+}
+
+void Window::ensureTitleIconTexture()
+{
+    if (titleIconTexture_ || !titleIconSurface_ || !renderer_)
+        return;
+
+    titleIconTexture_ = SDL_CreateTextureFromSurface(renderer_, titleIconSurface_);
+    if (titleIconTexture_)
+    {
+        SDL_DestroySurface(titleIconSurface_);
+        titleIconSurface_ = nullptr;
+
+        float tw = 0.f, th = 0.f;
+        if (SDL_GetTextureSize(titleIconTexture_, &tw, &th))
+        {
+            titleIconTexW_ = (int)tw;
+            titleIconTexH_ = (int)th;
+        }
+    }
+}
+
+Rect Window::titleIconRect() const
+{
+    if (!titleIconTexture_ || titleBarMode_ != TitleBarMode::Custom)
+        return { 0, 0, 0, 0 };
+
+    int bh = titleBarHeight_;
+    int box = (titleIconSize_ > 0) ? titleIconSize_ : (bh - 10);
+    if (box <= 0 || bh <= 0) return { 0, 0, 0, 0 };
+    box = std::min(box, bh - 4);
+    if (box <= 0) return { 0, 0, 0, 0 };
+
+    return { titleIconLeft_, (bh - box) / 2, box, box };
+}
+
+bool Window::setWindowIconSurface(SDL_Surface* surface)
+{
+    if (!sdlWindow_ || !surface) return false;
+    return SDL_SetWindowIcon(sdlWindow_, surface);
+}
+
+bool Window::setWindowIconMemory(const void* data, std::size_t size)
+{
+    SDL_Surface* surface = loadIconSurfaceFromMemory(data, size);
+    if (!surface) return false;
+
+    bool ok = setWindowIconSurface(surface);
+    SDL_DestroySurface(surface);
+    return ok;
 }
 
 void Window::setTheme(const Theme& theme)
@@ -8172,8 +8413,50 @@ void Window::render()
         SDL_SetRenderDrawColor(renderer_, titleBarColor_.r, titleBarColor_.g,
                                titleBarColor_.b, titleBarColor_.a);
         SDL_RenderFillRect(renderer_, &tb);
-        detail::drawText(renderer_, title_.c_str(), 6,
-                         (bh - currentFont()->lineHeight()) / 2, titleTextColor_);
+
+        ensureTitleIconTexture();
+        int titleX = 6;
+        if (titleIconTexture_)
+        {
+            Rect ib = titleIconRect();
+            if (ib.w > 0 && ib.h > 0)
+            {
+                if (titleIconHover_ && onTitleIconClick)
+                {
+                    SDL_SetRenderDrawColor(renderer_, titleButtonHoverColor_.r,
+                                           titleButtonHoverColor_.g,
+                                           titleButtonHoverColor_.b,
+                                           titleButtonHoverColor_.a);
+                    SDL_FRect hb = { (float)ib.x, (float)ib.y,
+                                     (float)ib.w, (float)ib.h };
+                    SDL_RenderFillRect(renderer_, &hb);
+                }
+
+                float iw = (float)titleIconTexW_;
+                float ih = (float)titleIconTexH_;
+                if (iw > 0.f && ih > 0.f)
+                {
+                    float scale = std::min((float)ib.w / iw, (float)ib.h / ih);
+                    float dw = iw * scale;
+                    float dh = ih * scale;
+                    SDL_FRect dst = { (float)ib.x + ((float)ib.w - dw) * 0.5f,
+                                      (float)ib.y + ((float)ib.h - dh) * 0.5f,
+                                      dw, dh };
+                    SDL_RenderTexture(renderer_, titleIconTexture_, nullptr, &dst);
+                }
+
+                titleX = ib.x + ib.w + titleIconGap_;
+            }
+        }
+
+        int titleW = minX - 4 - titleX;
+        if (titleW > 0)
+        {
+            detail::ClipGuard titleClip(renderer_, titleX, 0, titleW, bh);
+            detail::drawText(renderer_, title_.c_str(), titleX,
+                             (bh - currentFont()->lineHeight()) / 2,
+                             titleTextColor_);
+        }
 
         //--- minimize [_] ---
         SDL_FRect minBtn = { (float)minX, 0, (float)bsz, (float)bsz };

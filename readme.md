@@ -454,6 +454,14 @@ win.setBackgroundColor(sdlgui::Color(30, 30, 40));
 | `setTitle(const char*)` | `void` | Set window title |
 | `setTitleBarMode(TitleBarMode)` | `void` | Switch title bar mode |
 | `setTitleBarHeight(int)` | `void` | Set custom title bar height |
+| `setTitleIconTexture(SDL_Texture*)` | `void` | Set icon from texture (takes ownership) |
+| `setTitleIconSurface(SDL_Surface*)` | `bool` | Set icon from surface (takes ownership) |
+| `setTitleIconMemory(data, size)` | `bool` | Set icon from embedded PNG/BMP bytes |
+| `setTitleIconPixels(w, h, rgba)` | `bool` | Set icon from RGBA pixel data |
+| `clearTitleIcon()` | `void` | Remove the title bar icon |
+| `setTitleIconSize(int)` | `void` | Icon box size; `0` = automatic |
+| `setTitleIconPadding(left, gap)` | `void` | Left padding and title gap |
+| `setWindowIconMemory(data, size)` | `bool` | Set the OS/taskbar icon from PNG/BMP bytes |
 | `setBackgroundColor(Color)` | `void` | Set window background color |
 | `setResizable(bool)` | `void` | Toggle window resizability at runtime |
 | `requestRedraw()` | `void` | Force another frame to be rendered |
@@ -464,6 +472,24 @@ win.setBackgroundColor(sdlgui::Color(30, 30, 40));
 | `renderer()` | `SDL_Renderer*` | Get native SDL renderer |
 
 Borderless `Custom` / `Hidden` windows use native edge hit-testing: hovering the outer 6px (edges and corners) shows the OS resize cursor and dragging resizes the window. Call `setResizable(false)` to disable it.
+
+The custom title bar can show an icon on the left. For single-file distribution, embed a PNG in the executable instead of shipping an `.ico`:
+
+```bash
+xxd -i app_icon.png > app_icon.h
+```
+
+```cpp
+win.setTitleBarMode(sdlgui::Window::TitleBarMode::Custom);
+win.setTitleIconMemory(app_icon_png, app_icon_png_len);
+win.setWindowIconMemory(app_icon_png, app_icon_png_len); // taskbar/dock
+
+win.onTitleIconClick = [] {
+    // optional: open an app menu
+};
+```
+
+`setTitleIconMemory()` accepts PNG or BMP without requiring SDL3_image. Texture/surface setters take ownership; memory data is only read during the call.
 
 #### Application
 
@@ -1643,6 +1669,14 @@ win.setBackgroundColor(sdlgui::Color(30, 30, 40));
 | `setTitle(const char*)` | `void` | 设置窗口标题 |
 | `setTitleBarMode(TitleBarMode)` | `void` | 切换标题栏模式 |
 | `setTitleBarHeight(int)` | `void` | 设置自定义标题栏高度 |
+| `setTitleIconTexture(SDL_Texture*)` | `void` | 用纹理设置图标（接管所有权） |
+| `setTitleIconSurface(SDL_Surface*)` | `bool` | 用 Surface 设置图标（接管所有权） |
+| `setTitleIconMemory(data, size)` | `bool` | 用内嵌 PNG/BMP 字节设置图标 |
+| `setTitleIconPixels(w, h, rgba)` | `bool` | 用 RGBA 像素数据设置图标 |
+| `clearTitleIcon()` | `void` | 移除标题栏图标 |
+| `setTitleIconSize(int)` | `void` | 图标框尺寸；`0` = 自动 |
+| `setTitleIconPadding(left, gap)` | `void` | 左边距和与标题的间距 |
+| `setWindowIconMemory(data, size)` | `bool` | 用 PNG/BMP 字节设置系统/任务栏图标 |
 | `setBackgroundColor(Color)` | `void` | 设置窗口背景颜色 |
 | `setResizable(bool)` | `void` | 运行时切换窗口可缩放性 |
 | `requestRedraw()` | `void` | 强制再渲染一帧 |
@@ -1653,6 +1687,24 @@ win.setBackgroundColor(sdlgui::Color(30, 30, 40));
 | `renderer()` | `SDL_Renderer*` | 获取原生 SDL 渲染器 |
 
 无边框的 `Custom` / `Hidden` 窗口使用原生边缘命中测试：鼠标进入外侧 6px（边和角）会显示系统缩放光标，拖动即可缩放。调用 `setResizable(false)` 可关闭。
+
+自绘标题栏支持左侧图标。单文件分发时把 PNG 编进程序，不要附带 `.ico`：
+
+```bash
+xxd -i app_icon.png > app_icon.h
+```
+
+```cpp
+win.setTitleBarMode(sdlgui::Window::TitleBarMode::Custom);
+win.setTitleIconMemory(app_icon_png, app_icon_png_len);
+win.setWindowIconMemory(app_icon_png, app_icon_png_len); // 任务栏/Dock
+
+win.onTitleIconClick = [] {
+    // 可选：打开应用菜单
+};
+```
+
+`setTitleIconMemory()` 不需要 SDL3_image，支持 PNG/BMP；纹理/Surface 接口会接管所有权，内存数据只在调用期间读取。
 
 #### Application（应用程序）
 
