@@ -1342,6 +1342,210 @@ private:
 };
 
 //==============================================================================
+// Rich text view
+//==============================================================================
+enum class RichBlockType
+{
+    Paragraph,
+    Heading,
+    CodeBlock,
+    Quote,
+    ListItem,
+    Table
+};
+
+struct RichTextStyle
+{
+    std::shared_ptr<Font> font;              // null = current/default font
+    Color color = Color(0, 0, 0, 0);         // alpha 0 = view default
+    Color background = Color(0, 0, 0, 0);    // inline background
+    bool  underline = false;
+};
+
+struct RichTextRun
+{
+    std::string  text;
+    RichTextStyle style;
+    std::string  href;
+};
+
+struct RichTableCell
+{
+    std::vector<RichTextRun> runs;
+};
+
+struct RichTableRow
+{
+    std::vector<RichTableCell> cells;
+};
+
+struct RichTable
+{
+    std::vector<RichTableRow> rows;
+    std::vector<float> columnWeights; // empty = equal widths
+    bool headerRow = true;
+    int  cellPadding = 6;
+};
+
+struct RichTextBlock
+{
+    RichBlockType type = RichBlockType::Paragraph;
+    std::vector<RichTextRun> runs;
+    RichTable table;
+    int  indent = 0;
+    int  marginTop = 0;
+    int  marginBottom = 6;
+    bool wrap = true;
+    Color background = Color(0, 0, 0, 0);
+    int  headingLevel = 1;
+};
+
+class RichTextView : public ScrollView
+{
+public:
+    explicit RichTextView(Widget* parent = nullptr);
+
+    void clear();
+    int  addBlock(const RichTextBlock& block);
+    int  addParagraph(const std::vector<RichTextRun>& runs);
+    int  addHeading(const std::vector<RichTextRun>& runs, int level = 1);
+    int  addCodeBlock(const std::string& text,
+                      const RichTextStyle& style = RichTextStyle());
+    int  addListItem(const std::vector<RichTextRun>& runs,
+                     const std::string& bullet = "*");
+    int  addQuote(const std::vector<RichTextRun>& runs);
+    int  addTable(const RichTable& table);
+    void setBlocks(std::vector<RichTextBlock> blocks);
+    const std::vector<RichTextBlock>& blocks() const { return blocks_; }
+
+    void setPadding(int px);
+    int  padding() const { return padding_; }
+    void setLineSpacing(int px);
+    int  lineSpacing() const { return lineSpacing_; }
+    void setDefaultTextColor(Color color);
+    void setLinkColor(Color color);
+    void setCodeBackground(Color color);
+    void setCodeBorder(Color color);
+    void setQuoteBarColor(Color color);
+    void setTableColors(Color row, Color header, Color border);
+    void setSelectionColor(Color color);
+    void setSelectable(bool on);
+    bool selectable() const { return selectable_; }
+    void selectAll();
+    void clearSelection();
+    std::string selectedText() const;
+    void relayout();
+
+    std::function<void(const std::string&)> onLinkClick;
+
+protected:
+    void onRender(SDL_Renderer* renderer) override;
+    void onFontChanged() override;
+    void layoutChildren() override;
+
+private:
+    struct Glyph
+    {
+        int  run = 0;
+        int  start = 0;
+        int  end = 0;
+        int  advance = 0;
+        int  lineHeight = 16;
+        int  ascent = 16;
+        int  docOffset = 0;
+        bool space = false;
+        bool breakable = false;
+    };
+
+    struct PlacedRun
+    {
+        std::string  text;
+        RichTextStyle style;
+        std::string  href;
+        Font*        font = nullptr;
+        int          x = 0;
+        int          width = 0;
+        int          docOffset = 0;
+    };
+
+    struct RichLine
+    {
+        int  block = 0;
+        int  x = 0;
+        int  y = 0;
+        int  width = 0;
+        int  height = 16;
+        int  ascent = 16;
+        bool code = false;
+        std::vector<PlacedRun> runs;
+    };
+
+    struct BlockRect
+    {
+        int  block = 0;
+        Rect rect;
+    };
+
+    struct TableRect
+    {
+        int  block = 0;
+        int  row = 0;
+        int  col = 0;
+        bool header = false;
+        Rect rect;
+    };
+
+    struct LinkRect
+    {
+        Rect rect;
+        std::string href;
+    };
+
+    Font* runFont(const RichTextStyle& style) const;
+    void  ensureLayout();
+    void  buildLayout();
+    void  appendBlockLines(int blockIndex, int& y, int& maxRight, int& docCursor);
+    void  appendWrappedLine(int blockIndex, const std::vector<Glyph>& glyphs,
+                            int start, int end, int& y, int& maxRight,
+                            bool code);
+    void  appendEmptyLine(int blockIndex, int& y);
+    void  appendTableLines(int blockIndex, int& y, int& maxRight, int& docCursor);
+    void  appendCellLines(int blockIndex, const std::vector<RichTextRun>& runs,
+                          int x, int y, int width, int& height,
+                          int& maxRight, int& docCursor);
+    int   hitTestDocOffset(int localX, int localY) const;
+    void  normalizeSelection(int& start, int& end) const;
+
+    std::vector<RichTextBlock> blocks_;
+    std::vector<RichLine> lines_;
+    std::vector<BlockRect> blockRects_;
+    std::vector<TableRect> tableRects_;
+    std::vector<LinkRect>  linkRects_;
+    std::string            docText_;
+
+    int      padding_ = 8;
+    int      lineSpacing_ = 2;
+    Color    defaultTextColor_ = Color::White;
+    Color    linkColor_ = Color(100, 170, 255);
+    Color    codeBackground_ = Color(38, 38, 42);
+    Color    codeBorder_ = Color(65, 65, 70);
+    Color    quoteBarColor_ = Color(80, 140, 210);
+    Color    tableRowBackground_ = Color(0, 0, 0, 0);
+    Color    tableHeaderBackground_ = Color(52, 52, 58);
+    Color    tableBorder_ = Color(80, 80, 86);
+    Color    selectionColor_ = Color(50, 100, 180, 150);
+
+    bool     selectable_ = true;
+    bool     selecting_ = false;
+    int      selAnchor_ = -1;
+    int      selCursor_ = -1;
+
+    bool     layoutDirty_ = true;
+    int      layoutWidth_ = -1;
+    uint64_t layoutFontEpoch_ = 0;
+};
+
+//==============================================================================
 // Window — OS-level window
 //==============================================================================
 class Window
@@ -2140,6 +2344,13 @@ static void drawText(SDL_Renderer* renderer, const char* text,
 {
     if (!text || !*text) return;
     currentFont()->draw(renderer, text, x, y, color);
+}
+
+static void drawText(Font* font, SDL_Renderer* renderer, const char* text,
+                     int x, int y, Color color)
+{
+    if (font && text && *text)
+        font->draw(renderer, text, x, y, color);
 }
 
 } //namespace detail
@@ -5943,6 +6154,1012 @@ void TextArea::onRender(SDL_Renderer* renderer)
 }
 
 //==============================================================================
+// RichTextView
+//==============================================================================
+RichTextView::RichTextView(Widget* parent)
+    : ScrollView(parent)
+{
+    scrollbarV(true);
+    scrollbarH(true);
+    focusable_ = true;
+
+    auto baseDown = onMouseDown;
+    onMouseDown = [this, baseDown](MouseEvent& e)
+    {
+        baseDown(e);
+        if (draggingScrollbar()) return;
+
+        ensureLayout();
+        int mx = e.x + scrollX_;
+        int my = e.y + scrollY_;
+
+        for (const auto& link : linkRects_)
+        {
+            if (mx >= link.rect.x && mx < link.rect.x + link.rect.w &&
+                my >= link.rect.y && my < link.rect.y + link.rect.h)
+            {
+                if (onLinkClick) onLinkClick(link.href);
+                return;
+            }
+        }
+
+        if (!selectable_) return;
+        int off = hitTestDocOffset(e.x, e.y);
+        if (off < 0) return;
+
+        if (SDL_GetModState() & SDL_KMOD_SHIFT)
+        {
+            if (selAnchor_ < 0) selAnchor_ = selCursor_;
+        }
+        else
+        {
+            selAnchor_ = off;
+        }
+        selCursor_ = off;
+        selecting_ = true;
+        markDirty();
+    };
+
+    auto baseMove = onMouseMove;
+    onMouseMove = [this, baseMove](MouseEvent& e)
+    {
+        baseMove(e);
+        if (draggingScrollbar() || !selecting_) return;
+        int off = hitTestDocOffset(e.x, e.y);
+        if (off >= 0)
+        {
+            selCursor_ = off;
+            markDirty();
+        }
+    };
+
+    auto baseUp = onMouseUp;
+    onMouseUp = [this, baseUp](MouseEvent& e)
+    {
+        baseUp(e);
+        selecting_ = false;
+    };
+
+    onKeyDown = [this](KeyEvent& e)
+    {
+        bool ctrl = (e.mod & SDL_KMOD_CTRL) != 0;
+        if (!selectable_) return;
+
+        if (ctrl && e.key == SDLK_A)
+        {
+            selectAll();
+        }
+        else if (ctrl && e.key == SDLK_C)
+        {
+            std::string text = selectedText();
+            if (!text.empty())
+                SDL_SetClipboardText(text.c_str());
+        }
+        else if (e.key == SDLK_ESCAPE)
+        {
+            clearSelection();
+        }
+    };
+}
+
+Font* RichTextView::runFont(const RichTextStyle& style) const
+{
+    return style.font ? style.font.get() : currentFont();
+}
+
+void RichTextView::clear()
+{
+    blocks_.clear();
+    selAnchor_ = selCursor_ = -1;
+    relayout();
+}
+
+int RichTextView::addBlock(const RichTextBlock& block)
+{
+    blocks_.push_back(block);
+    selAnchor_ = selCursor_ = -1;
+    layoutDirty_ = true;
+    markDirty();
+    return (int)blocks_.size() - 1;
+}
+
+int RichTextView::addParagraph(const std::vector<RichTextRun>& runs)
+{
+    RichTextBlock b;
+    b.type = RichBlockType::Paragraph;
+    b.runs = runs;
+    b.marginBottom = 6;
+    return addBlock(b);
+}
+
+int RichTextView::addHeading(const std::vector<RichTextRun>& runs, int level)
+{
+    RichTextBlock b;
+    b.type = RichBlockType::Heading;
+    b.runs = runs;
+    b.headingLevel = std::max(1, level);
+    b.marginTop = (level <= 1) ? 12 : 8;
+    b.marginBottom = 6;
+    return addBlock(b);
+}
+
+int RichTextView::addCodeBlock(const std::string& text,
+                               const RichTextStyle& style)
+{
+    RichTextBlock b;
+    b.type = RichBlockType::CodeBlock;
+    b.wrap = false;
+    b.marginTop = 6;
+    b.marginBottom = 8;
+    b.background = codeBackground_;
+
+    RichTextRun run;
+    run.text = text;
+    run.style = style;
+    b.runs.push_back(run);
+    return addBlock(b);
+}
+
+int RichTextView::addListItem(const std::vector<RichTextRun>& runs,
+                              const std::string& bullet)
+{
+    RichTextBlock b;
+    b.type = RichBlockType::ListItem;
+    b.marginBottom = 3;
+
+    RichTextRun mark;
+    mark.text = bullet.empty() ? "*" : bullet;
+    mark.text += " ";
+    b.runs.push_back(mark);
+    b.runs.insert(b.runs.end(), runs.begin(), runs.end());
+    return addBlock(b);
+}
+
+int RichTextView::addQuote(const std::vector<RichTextRun>& runs)
+{
+    RichTextBlock b;
+    b.type = RichBlockType::Quote;
+    b.runs = runs;
+    b.indent = 10;
+    b.marginTop = 6;
+    b.marginBottom = 6;
+    return addBlock(b);
+}
+
+int RichTextView::addTable(const RichTable& table)
+{
+    RichTextBlock b;
+    b.type = RichBlockType::Table;
+    b.table = table;
+    b.marginTop = 6;
+    b.marginBottom = 8;
+    return addBlock(b);
+}
+
+void RichTextView::setBlocks(std::vector<RichTextBlock> blocks)
+{
+    blocks_ = std::move(blocks);
+    selAnchor_ = selCursor_ = -1;
+    relayout();
+}
+
+void RichTextView::setPadding(int px)
+{
+    padding_ = std::max(0, px);
+    relayout();
+}
+
+void RichTextView::setLineSpacing(int px)
+{
+    lineSpacing_ = px;
+    relayout();
+}
+
+void RichTextView::setDefaultTextColor(Color color)
+{
+    defaultTextColor_ = color;
+    markDirty();
+}
+
+void RichTextView::setLinkColor(Color color)
+{
+    linkColor_ = color;
+    markDirty();
+}
+
+void RichTextView::setCodeBackground(Color color)
+{
+    codeBackground_ = color;
+    markDirty();
+}
+
+void RichTextView::setCodeBorder(Color color)
+{
+    codeBorder_ = color;
+    markDirty();
+}
+
+void RichTextView::setQuoteBarColor(Color color)
+{
+    quoteBarColor_ = color;
+    markDirty();
+}
+
+void RichTextView::setTableColors(Color row, Color header, Color border)
+{
+    tableRowBackground_ = row;
+    tableHeaderBackground_ = header;
+    tableBorder_ = border;
+    markDirty();
+}
+
+void RichTextView::setSelectionColor(Color color)
+{
+    selectionColor_ = color;
+    markDirty();
+}
+
+void RichTextView::setSelectable(bool on)
+{
+    selectable_ = on;
+    focusable_ = on;
+    if (!on) clearSelection();
+}
+
+void RichTextView::selectAll()
+{
+    if (!selectable_) return;
+    ensureLayout();
+    selAnchor_ = 0;
+    selCursor_ = (int)docText_.size();
+    markDirty();
+}
+
+void RichTextView::clearSelection()
+{
+    if (selAnchor_ >= 0 || selCursor_ >= 0)
+    {
+        selAnchor_ = -1;
+        selCursor_ = -1;
+        selecting_ = false;
+        markDirty();
+    }
+}
+
+void RichTextView::normalizeSelection(int& start, int& end) const
+{
+    start = selAnchor_;
+    end = selCursor_;
+    if (start < 0 || end < 0)
+    {
+        start = end = 0;
+        return;
+    }
+    if (start > end) std::swap(start, end);
+    start = std::max(0, std::min(start, (int)docText_.size()));
+    end = std::max(0, std::min(end, (int)docText_.size()));
+}
+
+std::string RichTextView::selectedText() const
+{
+    int a = 0, b = 0;
+    normalizeSelection(a, b);
+    if (b <= a) return {};
+    return docText_.substr((std::size_t)a, (std::size_t)(b - a));
+}
+
+int RichTextView::hitTestDocOffset(int localX, int localY) const
+{
+    int my = localY + scrollY_;
+    int mx = localX + scrollX_;
+
+    for (const auto& line : lines_)
+    {
+        if (my < line.y || my >= line.y + line.height) continue;
+        if (line.runs.empty()) return -1;
+
+        for (std::size_t i = 0; i < line.runs.size(); ++i)
+        {
+            const PlacedRun& run = line.runs[i];
+            if (mx < run.x + run.width || i + 1 == line.runs.size())
+            {
+                int x = mx - run.x;
+                if (x < 0) x = 0;
+                if (x > run.width) x = run.width;
+                if (!run.font) return run.docOffset;
+
+                int byte = 0;
+                int w = 0;
+                const char* base = run.text.c_str();
+                const char* p = base;
+                while (*p)
+                {
+                    const char* prev = p;
+                    uint32_t cp = detail::decodeUTF8(p);
+                    int next = (int)(p - base);
+                    int adv = run.font->advance(cp);
+                    if (w + adv > x) break;
+                    w += adv;
+                    byte = next;
+                    (void)prev;
+                }
+                return run.docOffset + byte;
+            }
+        }
+    }
+    return -1;
+}
+
+void RichTextView::relayout()
+{
+    layoutDirty_ = true;
+    ensureLayout();
+    markDirty();
+}
+
+void RichTextView::onFontChanged()
+{
+    layoutDirty_ = true;
+    markDirty();
+}
+
+void RichTextView::layoutChildren()
+{
+    Widget::layoutChildren();
+    layoutDirty_ = true;
+    ensureLayout();
+}
+
+void RichTextView::ensureLayout()
+{
+    if (!layoutDirty_ &&
+        layoutWidth_ == width_ &&
+        layoutFontEpoch_ == fontEpoch())
+        return;
+
+    buildLayout();
+}
+
+void RichTextView::appendEmptyLine(int blockIndex, int& y)
+{
+    RichLine line;
+    line.block = blockIndex;
+    line.x = padding_ + blocks_[blockIndex].indent;
+    line.y = y;
+    line.height = std::max(1, currentFont()->lineHeight());
+    line.ascent = currentFont()->ascent();
+    lines_.push_back(line);
+    y += line.height + lineSpacing_;
+}
+
+void RichTextView::appendWrappedLine(int blockIndex,
+                                     const std::vector<Glyph>& glyphs,
+                                     int start, int end,
+                                     int& y, int& maxRight, bool code)
+{
+    const RichTextBlock& block = blocks_[blockIndex];
+    RichLine line;
+    line.block = blockIndex;
+    line.x = padding_ + block.indent;
+    line.y = y;
+    line.code = code || block.type == RichBlockType::CodeBlock;
+    line.ascent = std::max(1, currentFont()->ascent());
+
+    if (start >= end)
+    {
+        appendEmptyLine(blockIndex, y);
+        return;
+    }
+
+    int width = 0;
+    int height = 0;
+
+    int i = start;
+    while (i < end)
+    {
+        int runIndex = glyphs[i].run;
+        int segStart = glyphs[i].start;
+        int segEnd = glyphs[i].end;
+        int segDocOffset = glyphs[i].docOffset;
+        int segWidth = 0;
+        int j = i;
+
+        while (j < end && glyphs[j].run == runIndex)
+        {
+            segEnd = glyphs[j].end;
+            segWidth += glyphs[j].advance;
+            height = std::max(height, glyphs[j].lineHeight);
+            line.ascent = std::max(line.ascent, glyphs[j].ascent);
+            ++j;
+        }
+
+        const RichTextRun& run = block.runs[runIndex];
+        PlacedRun pr;
+        pr.text = run.text.substr((std::size_t)segStart,
+                                  (std::size_t)(segEnd - segStart));
+        pr.style = run.style;
+        pr.href = run.href;
+        pr.font = runFont(run.style);
+        pr.x = line.x + width;
+        pr.width = segWidth;
+        pr.docOffset = segDocOffset;
+        line.runs.push_back(std::move(pr));
+
+        width += segWidth;
+        i = j;
+    }
+
+    line.width = width;
+    line.height = std::max(height, 1);
+
+    for (const auto& run : line.runs)
+    {
+        if (run.href.empty()) continue;
+        LinkRect link;
+        link.rect = { run.x, line.y, run.width, line.height };
+        link.href = run.href;
+        linkRects_.push_back(std::move(link));
+    }
+
+    lines_.push_back(std::move(line));
+    maxRight = std::max(maxRight, line.x + width);
+    y += lines_.back().height + lineSpacing_;
+}
+
+void RichTextView::appendCellLines(int blockIndex,
+                                   const std::vector<RichTextRun>& runs,
+                                   int x, int y, int width,
+                                   int& height, int& maxRight, int& docCursor)
+{
+    std::vector<Glyph> glyphs;
+    int contentY = 0;
+
+    auto buildLine = [&](int start, int end)
+    {
+        RichLine line;
+        line.block = blockIndex;
+        line.x = x;
+        line.y = y + contentY;
+
+        if (start >= end)
+        {
+            line.height = std::max(1, currentFont()->lineHeight());
+            line.ascent = currentFont()->ascent();
+            lines_.push_back(line);
+            contentY += line.height + lineSpacing_;
+            return;
+        }
+
+        int lineWidth = 0;
+        int lineHeight = 0;
+        line.ascent = std::max(1, currentFont()->ascent());
+
+        int i = start;
+        while (i < end)
+        {
+            int runIndex = glyphs[i].run;
+            int segStart = glyphs[i].start;
+            int segEnd = glyphs[i].end;
+            int segDocOffset = glyphs[i].docOffset;
+            int segWidth = 0;
+            int j = i;
+
+            while (j < end && glyphs[j].run == runIndex)
+            {
+                segEnd = glyphs[j].end;
+                segWidth += glyphs[j].advance;
+                lineHeight = std::max(lineHeight, glyphs[j].lineHeight);
+                line.ascent = std::max(line.ascent, glyphs[j].ascent);
+                ++j;
+            }
+
+            const RichTextRun& run = runs[runIndex];
+            PlacedRun pr;
+            pr.text = run.text.substr((std::size_t)segStart,
+                                      (std::size_t)(segEnd - segStart));
+            pr.style = run.style;
+            pr.href = run.href;
+            pr.font = runFont(run.style);
+            pr.x = line.x + lineWidth;
+            pr.width = segWidth;
+            pr.docOffset = segDocOffset;
+            line.runs.push_back(std::move(pr));
+
+            lineWidth += segWidth;
+            i = j;
+        }
+
+        line.width = lineWidth;
+        line.height = std::max(lineHeight, 1);
+
+        for (const auto& run : line.runs)
+        {
+            if (run.href.empty()) continue;
+            LinkRect link;
+            link.rect = { run.x, line.y, run.width, line.height };
+            link.href = run.href;
+            linkRects_.push_back(std::move(link));
+        }
+
+        maxRight = std::max(maxRight, line.x + line.width);
+        lines_.push_back(std::move(line));
+        contentY += lines_.back().height + lineSpacing_;
+    };
+
+    auto finishLine = [&]()
+    {
+        if (glyphs.empty())
+        {
+            buildLine(0, 0);
+        }
+        else
+        {
+            int start = 0;
+            while (start < (int)glyphs.size())
+            {
+                int w = 0;
+                int i = start;
+                int lastBreak = -1;
+
+                while (i < (int)glyphs.size())
+                {
+                    int g = glyphs[i].advance;
+                    if (i > start && w + g > width)
+                        break;
+                    w += g;
+                    ++i;
+                    if (glyphs[i - 1].breakable)
+                        lastBreak = i;
+                }
+
+                int end = (i >= (int)glyphs.size() || lastBreak <= start)
+                        ? i : lastBreak;
+                if (end <= start) end = start + 1;
+
+                buildLine(start, end);
+                start = end;
+            }
+        }
+        glyphs.clear();
+    };
+
+    for (int ri = 0; ri < (int)runs.size(); ++ri)
+    {
+        const RichTextRun& run = runs[ri];
+        Font* font = runFont(run.style);
+        int runDocStart = docCursor;
+        const char* base = run.text.c_str();
+        const char* p = base;
+
+        while (*p)
+        {
+            if (*p == '\n')
+            {
+                finishLine();
+                ++p;
+                continue;
+            }
+
+            const char* prev = p;
+            uint32_t cp = detail::decodeUTF8(p);
+
+            Glyph g;
+            g.run = ri;
+            g.start = (int)(prev - base);
+            g.end = (int)(p - base);
+            g.advance = font->advance(cp);
+            g.lineHeight = font->lineHeight();
+            g.ascent = font->ascent();
+            g.docOffset = runDocStart + g.start;
+            g.space = (cp == ' ' || cp == '\t');
+            g.breakable = g.space || cp == '-' || cp == '/';
+            glyphs.push_back(g);
+        }
+
+        docCursor += (int)run.text.size();
+    }
+
+    finishLine();
+    height = contentY;
+}
+
+void RichTextView::appendTableLines(int blockIndex, int& y, int& maxRight,
+                                    int& docCursor)
+{
+    const RichTable& table = blocks_[blockIndex].table;
+    if (table.rows.empty()) return;
+
+    int cols = 0;
+    for (const auto& row : table.rows)
+        cols = std::max(cols, (int)row.cells.size());
+    if (cols == 0) return;
+
+    int indent = blocks_[blockIndex].indent;
+    int avail = std::max(1, width_ - padding_ * 2 - indent);
+    int cellPad = std::max(0, table.cellPadding);
+
+    std::vector<float> weights = table.columnWeights;
+    if ((int)weights.size() != cols)
+        weights.assign((std::size_t)cols, 1.0f);
+
+    float totalWeight = 0.0f;
+    for (float w : weights)
+        totalWeight += (w > 0.0f) ? w : 1.0f;
+    if (totalWeight <= 0.0f) totalWeight = (float)cols;
+
+    std::vector<int> colW((std::size_t)cols, 0);
+    int used = 0;
+    for (int c = 0; c < cols; ++c)
+    {
+        float w = (weights[c] > 0.0f) ? weights[c] : 1.0f;
+        if (c + 1 == cols)
+            colW[c] = std::max(1, avail - used);
+        else
+        {
+            colW[c] = std::max(1, (int)(avail * w / totalWeight));
+            used += colW[c];
+        }
+    }
+
+    int tableLeft = padding_ + indent;
+    for (int r = 0; r < (int)table.rows.size(); ++r)
+    {
+        const RichTableRow& row = table.rows[r];
+        int rowTop = y;
+        int rowHeight = 0;
+        int colX = tableLeft;
+
+        for (int c = 0; c < cols; ++c)
+        {
+            int cw = colW[c];
+            int contentW = std::max(1, cw - cellPad * 2);
+            int cellH = 0;
+
+            if (c < (int)row.cells.size())
+                appendCellLines(blockIndex, row.cells[c].runs,
+                                colX + cellPad, rowTop + cellPad,
+                                contentW, cellH, maxRight, docCursor);
+            else
+                cellH = std::max(1, currentFont()->lineHeight()) + lineSpacing_;
+
+            rowHeight = std::max(rowHeight, cellH + cellPad * 2);
+
+            TableRect tr;
+            tr.block = blockIndex;
+            tr.row = r;
+            tr.col = c;
+            tr.header = table.headerRow && r == 0;
+            tr.rect = { colX, rowTop, cw, 0 };
+            tableRects_.push_back(tr);
+
+            colX += cw;
+
+            if (c + 1 < cols) ++docCursor;
+        }
+
+        for (std::size_t ti = tableRects_.size() - (std::size_t)cols;
+             ti < tableRects_.size(); ++ti)
+            tableRects_[ti].rect.h = rowHeight;
+
+        y += rowHeight;
+        if (r + 1 < (int)table.rows.size()) ++docCursor;
+    }
+
+    maxRight = std::max(maxRight, tableLeft + avail);
+}
+
+void RichTextView::appendBlockLines(int blockIndex, int& y, int& maxRight,
+                                    int& docCursor)
+{
+    const RichTextBlock& block = blocks_[blockIndex];
+    int contentX = padding_ + block.indent;
+    int avail = std::max(1, width_ - padding_ * 2 - block.indent);
+    bool code = (block.type == RichBlockType::CodeBlock);
+
+    std::vector<Glyph> glyphs;
+    auto finishLine = [&]()
+    {
+        if (glyphs.empty())
+        {
+            appendEmptyLine(blockIndex, y);
+        }
+        else if (!block.wrap || code)
+        {
+            appendWrappedLine(blockIndex, glyphs, 0, (int)glyphs.size(),
+                              y, maxRight, code);
+        }
+        else
+        {
+            int start = 0;
+            while (start < (int)glyphs.size())
+            {
+                int w = 0;
+                int i = start;
+                int lastBreak = -1;
+
+                while (i < (int)glyphs.size())
+                {
+                    int g = glyphs[i].advance;
+                    if (i > start && w + g > avail)
+                        break;
+                    w += g;
+                    ++i;
+                    if (glyphs[i - 1].breakable)
+                        lastBreak = i;
+                }
+
+                int end = (i >= (int)glyphs.size() || lastBreak <= start)
+                        ? i : lastBreak;
+                if (end <= start) end = start + 1;
+
+                appendWrappedLine(blockIndex, glyphs, start, end,
+                                  y, maxRight, code);
+                start = end;
+            }
+        }
+        glyphs.clear();
+    };
+
+    for (int ri = 0; ri < (int)block.runs.size(); ++ri)
+    {
+        const RichTextRun& run = block.runs[ri];
+        Font* font = runFont(run.style);
+        int runDocStart = docCursor;
+        const char* base = run.text.c_str();
+        const char* p = base;
+
+        while (*p)
+        {
+            if (*p == '\n')
+            {
+                finishLine();
+                ++p;
+                continue;
+            }
+
+            const char* prev = p;
+            uint32_t cp = detail::decodeUTF8(p);
+
+            Glyph g;
+            g.run = ri;
+            g.start = (int)(prev - base);
+            g.end = (int)(p - base);
+            g.advance = font->advance(cp);
+            g.lineHeight = font->lineHeight();
+            g.ascent = font->ascent();
+            g.docOffset = runDocStart + g.start;
+            g.space = (cp == ' ' || cp == '\t');
+            g.breakable = g.space || cp == '-' || cp == '/';
+            glyphs.push_back(g);
+        }
+
+        docCursor += (int)run.text.size();
+    }
+
+    finishLine();
+    (void)contentX;
+}
+
+void RichTextView::buildLayout()
+{
+    lines_.clear();
+    blockRects_.clear();
+    tableRects_.clear();
+    linkRects_.clear();
+
+    docText_.clear();
+    for (int i = 0; i < (int)blocks_.size(); ++i)
+    {
+        const RichTextBlock& block = blocks_[i];
+        if (block.type == RichBlockType::Table)
+        {
+            int cols = 0;
+            for (const auto& row : block.table.rows)
+                cols = std::max(cols, (int)row.cells.size());
+
+            for (int r = 0; r < (int)block.table.rows.size(); ++r)
+            {
+                const RichTableRow& row = block.table.rows[r];
+                for (int c = 0; c < cols; ++c)
+                {
+                    if (c < (int)row.cells.size())
+                        for (const auto& run : row.cells[c].runs)
+                            docText_ += run.text;
+                    if (c + 1 < cols)
+                        docText_ += '\t';
+                }
+                if (r + 1 < (int)block.table.rows.size())
+                    docText_ += '\n';
+            }
+        }
+        else
+        {
+            for (const auto& run : block.runs)
+                docText_ += run.text;
+        }
+        if (i + 1 < (int)blocks_.size())
+            docText_ += '\n';
+    }
+
+    int y = padding_;
+    int maxRight = width_;
+    int docCursor = 0;
+
+    for (int i = 0; i < (int)blocks_.size(); ++i)
+    {
+        const RichTextBlock& block = blocks_[i];
+        if (i > 0) ++docCursor;
+        y += block.marginTop;
+
+        int startY = y;
+        if (block.type == RichBlockType::Table)
+            appendTableLines(i, y, maxRight, docCursor);
+        else
+            appendBlockLines(i, y, maxRight, docCursor);
+        int endY = y - lineSpacing_;
+        if (endY < startY) endY = startY;
+
+        if (block.type == RichBlockType::CodeBlock ||
+            block.type == RichBlockType::Quote ||
+            block.background.a != 0)
+        {
+            BlockRect br;
+            br.block = i;
+            br.rect = { padding_, startY, std::max(1, width_ - padding_ * 2),
+                        std::max(1, endY - startY) };
+            blockRects_.push_back(br);
+        }
+
+        y += block.marginBottom;
+    }
+
+    int contentW = std::max(width_, maxRight + padding_);
+    int contentH = std::max(height_, y + padding_);
+    setContentSize(contentW, contentH);
+
+    layoutWidth_ = width_;
+    layoutFontEpoch_ = fontEpoch();
+    layoutDirty_ = false;
+}
+
+void RichTextView::onRender(SDL_Renderer* renderer)
+{
+    if (!visible_) return;
+
+    Rect r = absoluteRect();
+    detail::ClipGuard clip(renderer, r.x, r.y, r.w, r.h);
+
+    ensureLayout();
+
+    //block backgrounds
+    for (const auto& br : blockRects_)
+    {
+        if (br.block < 0 || br.block >= (int)blocks_.size()) continue;
+        const RichTextBlock& block = blocks_[br.block];
+
+        Rect box = br.rect;
+        box.x = r.x + box.x - scrollX_;
+        box.y = r.y + box.y - scrollY_;
+
+        if (block.type == RichBlockType::CodeBlock)
+        {
+            SDL_FRect fr = { (float)box.x, (float)box.y,
+                             (float)box.w, (float)box.h };
+            SDL_SetRenderDrawColor(renderer, codeBackground_.r, codeBackground_.g,
+                                   codeBackground_.b, codeBackground_.a);
+            SDL_RenderFillRect(renderer, &fr);
+            SDL_SetRenderDrawColor(renderer, codeBorder_.r, codeBorder_.g,
+                                   codeBorder_.b, codeBorder_.a);
+            SDL_RenderRect(renderer, &fr);
+        }
+        else if (block.type == RichBlockType::Quote)
+        {
+            SDL_FRect bar = { (float)box.x, (float)box.y, 3.0f, (float)box.h };
+            SDL_SetRenderDrawColor(renderer, quoteBarColor_.r, quoteBarColor_.g,
+                                   quoteBarColor_.b, quoteBarColor_.a);
+            SDL_RenderFillRect(renderer, &bar);
+        }
+        else if (block.background.a != 0)
+        {
+            SDL_FRect fr = { (float)box.x, (float)box.y,
+                             (float)box.w, (float)box.h };
+            SDL_SetRenderDrawColor(renderer, block.background.r, block.background.g,
+                                   block.background.b, block.background.a);
+            SDL_RenderFillRect(renderer, &fr);
+        }
+    }
+
+    for (const auto& tr : tableRects_)
+    {
+        Rect box = tr.rect;
+        box.x = r.x + box.x - scrollX_;
+        box.y = r.y + box.y - scrollY_;
+        SDL_FRect fr = { (float)box.x, (float)box.y,
+                         (float)box.w, (float)box.h };
+
+        Color fill = tr.header ? tableHeaderBackground_ : tableRowBackground_;
+        if (fill.a != 0)
+        {
+            SDL_SetRenderDrawColor(renderer, fill.r, fill.g, fill.b, fill.a);
+            SDL_RenderFillRect(renderer, &fr);
+        }
+
+        SDL_SetRenderDrawColor(renderer, tableBorder_.r, tableBorder_.g,
+                               tableBorder_.b, tableBorder_.a);
+        SDL_RenderRect(renderer, &fr);
+    }
+
+    int selStart = 0, selEnd = 0;
+    bool hasSel = selectable_ && selAnchor_ >= 0 && selCursor_ >= 0 &&
+                  selAnchor_ != selCursor_;
+    if (hasSel)
+        normalizeSelection(selStart, selEnd);
+
+    for (const auto& line : lines_)
+    {
+        int ly = r.y + line.y - scrollY_;
+        if (ly + line.height < r.y || ly > r.y + r.h) continue;
+
+        for (const auto& run : line.runs)
+        {
+            int x = r.x + run.x - scrollX_;
+            if (!run.font) continue;
+
+            if (run.style.background.a != 0)
+            {
+                SDL_FRect bg = { (float)x, (float)ly,
+                                 (float)run.width, (float)line.height };
+                SDL_SetRenderDrawColor(renderer, run.style.background.r,
+                                       run.style.background.g, run.style.background.b,
+                                       run.style.background.a);
+                SDL_RenderFillRect(renderer, &bg);
+            }
+
+            if (hasSel)
+            {
+                int runStart = run.docOffset;
+                int runEnd = run.docOffset + (int)run.text.size();
+                int a = std::max(selStart, runStart);
+                int b = std::min(selEnd, runEnd);
+                if (b > a)
+                {
+                    int l0 = a - runStart;
+                    int l1 = b - runStart;
+                    int x0 = x + run.font->measureTo(run.text.c_str(), l0);
+                    int x1 = x + run.font->measureTo(run.text.c_str(), l1);
+                    SDL_FRect sb = { (float)x0, (float)ly,
+                                     (float)(x1 - x0), (float)line.height };
+                    SDL_SetRenderDrawColor(renderer, selectionColor_.r,
+                                           selectionColor_.g, selectionColor_.b,
+                                           selectionColor_.a);
+                    SDL_RenderFillRect(renderer, &sb);
+                }
+            }
+
+            Color color = run.style.color;
+            if (color.a == 0)
+                color = run.href.empty() ? defaultTextColor_ : linkColor_;
+
+            int ty = ly + std::max(0, line.ascent - run.font->ascent());
+            detail::drawText(run.font, renderer, run.text.c_str(), x, ty, color);
+
+            if (run.style.underline || !run.href.empty())
+            {
+                SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+                SDL_RenderLine(renderer, (float)x,
+                               (float)(ly + line.height - 1),
+                               (float)(x + run.width),
+                               (float)(ly + line.height - 1));
+            }
+
+        }
+    }
+
+    renderScrollbars(renderer);
+    dirty_ = false;
+}
+
+//==============================================================================
 // ScrollView
 //==============================================================================
 ScrollView::ScrollView(Widget* parent)
@@ -6976,6 +8193,15 @@ void applyTheme(Widget& root, const Theme& theme)
         ta->setCursorColor(theme.textAreaCursor);
         ta->setSelectionColor(theme.textAreaSelection);
         ta->setBorderColor(theme.panelBorder);
+    }
+    else if (auto* rt = dynamic_cast<RichTextView*>(&root))
+    {
+        rt->setDefaultTextColor(theme.text);
+        rt->setLinkColor(theme.menuAccent);
+        rt->setCodeBackground(theme.panelBg);
+        rt->setCodeBorder(theme.panelBorder);
+        rt->setQuoteBarColor(theme.menuAccent);
+        rt->setTableColors(theme.panelBg, theme.menuHover, theme.panelBorder);
     }
 
     if (auto* sv = dynamic_cast<ScrollView*>(&root))

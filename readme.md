@@ -20,6 +20,7 @@
 - Chainable position/size API: `pos()->sz()`
 - Opt-in layout: edge anchors, HBox/VBox linear layout, draggable SplitView
 - Built-in dark/light themes plus per-widget color APIs
+- `RichTextView` for styled runs, code blocks, quotes and links
 - Custom title bar with minimize, maximize, close buttons
 - TextBox / TextArea / ComboBox editing with caret and clipboard support; TextBox also supports placeholder, password masking, and max length; TextBox/TextArea editing keys are rebindable; IME candidate window follows the caret
 - Render-on-demand: idle windows skip Clear / Draw / Present
@@ -778,6 +779,90 @@ tb->resetKeyBindings();
 
 Available actions: `CursorLeft/Right/Up/Down/Home/End`, `SelectLeft/Right/Up/Down/Home/End`, `SelectAll`, `Copy`, `Cut`, `Paste`, `Backspace`, `DeleteForward`, `InsertNewline`, `ClearSelection`. TextBox ignores cursor-up/down and newline. Only Shift/Ctrl/Alt/GUI are compared; Caps Lock and Num Lock are ignored. `Tab` is not a text-edit action; when `app.setTabTraversal(true)` is enabled it is consumed by focus traversal.
 
+#### RichTextView
+
+A rich text renderer built from blocks and styled runs. It does **not** parse Markdown; feed it blocks/runs from your own parser.
+
+```cpp
+auto* rt = root.addChild<sdlgui::RichTextView>();
+rt->pos(20, 60)->sz(500, 300);
+
+sdlgui::RichTextRun normal;
+normal.text = "Hello ";
+
+sdlgui::RichTextRun bold;
+bold.text = "world";
+bold.style.color = sdlgui::Color::White;
+
+sdlgui::RichTextStyle codeStyle;
+codeStyle.background = sdlgui::Color(60, 60, 70);
+
+sdlgui::RichTextRun code;
+code.text = " inline ";
+code.style = codeStyle;
+
+sdlgui::RichTextRun link;
+link.text = "docs";
+link.href = "https://example.com";
+
+rt->addHeading({ normal }, 1);
+rt->addParagraph({ normal, bold, code, link });
+rt->addListItem({ normal });
+rt->addQuote({ normal });
+rt->addCodeBlock("int main() {\n  return 0;\n}", codeStyle);
+
+rt->onLinkClick = [](const std::string& href) {
+    // open href
+};
+```
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `addBlock(block)` | `int` | Add a block and return its index |
+| `addParagraph(runs)` / `addHeading(runs, level)` | `int` | Add paragraph / heading |
+| `addCodeBlock(text, style)` | `int` | Add a non-wrapping code block |
+| `addListItem(runs, bullet)` / `addQuote(runs)` | `int` | Add list item / quote |
+| `addTable(table)` | `int` | Add a simple table |
+| `setBlocks(blocks)` / `clear()` | `void` | Replace / clear content |
+| `blocks()` | `const vector<RichTextBlock>&` | Read blocks |
+| `setPadding` / `setLineSpacing` | `void` | Layout spacing |
+| `setDefaultTextColor` / `setLinkColor` | `void` | Default text / link color |
+| `setCodeBackground` / `setCodeBorder` / `setQuoteBarColor` | `void` | Block styling |
+| `setTableColors(row, header, border)` | `void` | Table cell colors |
+| `setSelectable(bool)` / `selectable()` | `void` / `bool` | Enable/disable selection (default `true`) |
+| `setSelectionColor(Color)` | `void` | Selection highlight color |
+| `selectAll()` / `clearSelection()` | `void` | Select all / clear selection |
+| `selectedText()` | `string` | Selected text, including block newlines |
+| `relayout()` | `void` | Force re-layout |
+| `onLinkClick` | callback | Fired with the run's `href` |
+
+`RichTextStyle.font` is a `std::shared_ptr<Font>`; `nullptr` uses `currentFont()`. A color with `alpha == 0` means "use the view default". `RichTextStyle.background` draws an inline background, and `underline`/`href` draw an underline.
+
+Tables use `RichTable`, `RichTableRow` and `RichTableCell`:
+
+```cpp
+sdlgui::RichTable table;
+table.headerRow = true;
+table.cellPadding = 6;
+table.columnWeights = { 1.0f, 2.0f }; // relative widths
+
+sdlgui::RichTableRow header;
+header.cells = { { { "Name", {}, "" } }, { { "Description", {}, "" } } };
+table.rows.push_back(header);
+
+sdlgui::RichTableRow row;
+row.cells = { { { "alpha", {}, "" } }, { { "A longer cell that wraps internally", {}, "" } } };
+table.rows.push_back(row);
+
+rt->addTable(table);
+```
+
+Cell text is wrapped inside its column, participates in selection, and can contain styled runs/links. Column widths come from `columnWeights`; empty weights mean equal columns. Row/column spanning is not supported.
+
+Selection: drag to select, Shift+click to extend, Ctrl+A / Ctrl+C / Esc when the view has focus. Call `setSelectable(false)` to disable it.
+
+Current scope: paragraphs, headings, code blocks, quotes, list items, tables, mixed fonts/colors, automatic wrapping, links and selection/copy. Inline images and collapsible blocks are not implemented yet.
+
 #### Image
 
 Load and display an image. Requires `#define SDLGUI_USE_SDL_IMAGE` and SDL3_image library.
@@ -1089,11 +1174,12 @@ cv->onDraw = [](SDL_Renderer* r, const sdlgui::Rect& a)
 
 - Multi-window focus/event routing is implemented, but multi-window apps are still not exhaustively tested
 - Text selection exists in TextBox and TextArea; ComboBox does not have a selection model yet
-- TextArea has no undo/redo, syntax highlighting, or large-file buffer optimization yet; Tab still moves focus
+- TextArea has no undo/redo, syntax highlighting, or large-file buffer optimization yet; Tab focus traversal is opt-in
 - No grid layout, docking, or CSS-style flex; anchors, HBox/VBox and SplitView are the supported layout primitives
 - No fullscreen API; windows are windowed only
 - The built-in font is a fixed 16px bitmap; runtime `Font` objects can change metrics/drawing, but widget sizes are explicit and there is no automatic HiDPI/kerning/ligature handling
-- Character-level wrapping only (no word-aware line breaking)
+- `Label` wrapping is character-level; `TextArea` uses word-aware wrapping
+- `RichTextView` has no inline images, collapsible blocks, or table row/column spanning yet
 - Legacy `setFontRenderer()` fonts are measured as 8px per character; use `setFont()` for real metrics
 - DropDown / ComboBox lists are drawn inside the widget, so a sibling added later and overlapping the open list can cover it
 - Redraw-on-demand is whole-window: no partial dirty rectangles
@@ -1122,6 +1208,7 @@ BSD 2-Clause License. See [LICENSE](LICENSE).
 - `addChild<T>()` 模板 — 无需手动 `make_unique` + `move`
 - 可链式调用的位置/大小 API：`pos()->sz()`
 - 内置深色/浅色主题，并提供逐控件颜色 API
+- `RichTextView` 支持富文本 run、代码块、引用和链接
 - 自定义标题栏（最小化、最大化、关闭按钮）
 - TextBox / TextArea / ComboBox 编辑：光标、剪贴板（TextBox 另支持占位符、密码掩码和最大长度；TextBox/TextArea 编辑键位可复写；输入法候选窗跟随光标）
 - 按需重绘：空闲窗口跳过 Clear / Draw / Present
@@ -1879,6 +1966,90 @@ tb->resetKeyBindings();
 
 可用动作：`CursorLeft/Right/Up/Down/Home/End`、`SelectLeft/Right/Up/Down/Home/End`、`SelectAll`、`Copy`、`Cut`、`Paste`、`Backspace`、`DeleteForward`、`InsertNewline`、`ClearSelection`。TextBox 会忽略上下移动和换行动作。只比较 Shift/Ctrl/Alt/GUI 修饰键，Caps Lock/Num Lock 不影响匹配。`Tab` 不是文本编辑动作；开启 `app.setTabTraversal(true)` 时由焦点遍历消费。
 
+#### RichTextView（富文本视图）
+
+富文本渲染器，由 block + 带样式的 run 组成；它**不解析 Markdown**，由你自己的解析器输出 block/run。
+
+```cpp
+auto* rt = root.addChild<sdlgui::RichTextView>();
+rt->pos(20, 60)->sz(500, 300);
+
+sdlgui::RichTextRun normal;
+normal.text = "Hello ";
+
+sdlgui::RichTextRun bold;
+bold.text = "world";
+bold.style.color = sdlgui::Color::White;
+
+sdlgui::RichTextStyle codeStyle;
+codeStyle.background = sdlgui::Color(60, 60, 70);
+
+sdlgui::RichTextRun code;
+code.text = " inline ";
+code.style = codeStyle;
+
+sdlgui::RichTextRun link;
+link.text = "文档";
+link.href = "https://example.com";
+
+rt->addHeading({ normal }, 1);
+rt->addParagraph({ normal, bold, code, link });
+rt->addListItem({ normal });
+rt->addQuote({ normal });
+rt->addCodeBlock("int main() {\n  return 0;\n}", codeStyle);
+
+rt->onLinkClick = [](const std::string& href) {
+    // 打开链接
+};
+```
+
+| 方法 | 返回 | 说明 |
+|------|------|------|
+| `addBlock(block)` | `int` | 添加 block，返回索引 |
+| `addParagraph(runs)` / `addHeading(runs, level)` | `int` | 添加段落 / 标题 |
+| `addCodeBlock(text, style)` | `int` | 添加不换行代码块 |
+| `addListItem(runs, bullet)` / `addQuote(runs)` | `int` | 添加列表项 / 引用 |
+| `addTable(table)` | `int` | 添加简单表格 |
+| `setBlocks(blocks)` / `clear()` | `void` | 替换 / 清空内容 |
+| `blocks()` | `const vector<RichTextBlock>&` | 读取 block |
+| `setPadding` / `setLineSpacing` | `void` | 布局间距 |
+| `setDefaultTextColor` / `setLinkColor` | `void` | 默认文字 / 链接颜色 |
+| `setCodeBackground` / `setCodeBorder` / `setQuoteBarColor` | `void` | 块级样式 |
+| `setTableColors(row, header, border)` | `void` | 表格单元格颜色 |
+| `setSelectable(bool)` / `selectable()` | `void` / `bool` | 开关选择功能（默认 `true`） |
+| `setSelectionColor(Color)` | `void` | 选择区颜色 |
+| `selectAll()` / `clearSelection()` | `void` | 全选 / 取消选择 |
+| `selectedText()` | `string` | 选中文本（包含 block 间换行） |
+| `relayout()` | `void` | 强制重新布局 |
+| `onLinkClick` | callback | 点击链接时回调 `href` |
+
+`RichTextStyle.font` 是 `std::shared_ptr<Font>`；`nullptr` 使用 `currentFont()`。颜色 alpha 为 0 表示使用视图默认色；`background` 画行内背景，`underline`/`href` 画下划线。
+
+表格使用 `RichTable`、`RichTableRow` 和 `RichTableCell`：
+
+```cpp
+sdlgui::RichTable table;
+table.headerRow = true;
+table.cellPadding = 6;
+table.columnWeights = { 1.0f, 2.0f }; // 相对列宽
+
+sdlgui::RichTableRow header;
+header.cells = { { { "名称", {}, "" } }, { { "说明", {}, "" } } };
+table.rows.push_back(header);
+
+sdlgui::RichTableRow row;
+row.cells = { { { "alpha", {}, "" } }, { { "单元格内会自动换行的长文本", {}, "" } } };
+table.rows.push_back(row);
+
+rt->addTable(table);
+```
+
+单元格文本会在列宽内自动换行，支持选择、样式 run 和链接。`columnWeights` 是相对列宽；为空时等宽。暂不支持行列合并。
+
+选择：拖动选择、Shift+点击扩展、Ctrl+A / Ctrl+C / Esc（控件有焦点时）。调用 `setSelectable(false)` 可关闭。
+
+当前支持：段落、标题、代码块、引用、列表项、表格、混合字体/颜色、自动换行、链接、选择复制。行内图片、可折叠 block 暂未实现。
+
 #### Image（图片）
 
 显示图片。需定义 `#define SDLGUI_USE_SDL_IMAGE` 并安装 SDL3_image。
@@ -2192,11 +2363,12 @@ cv->onDraw = [](SDL_Renderer* r, const sdlgui::Rect& a)
 
 - 多窗口的焦点/事件路由已实现，但多窗口场景仍未充分测试
 - TextBox 和 TextArea 已有选择区；ComboBox 还没有选择模型
-- TextArea 还没有撤销/重做、语法高亮和大文件缓冲优化；Tab 仍用于切换焦点
+- TextArea 还没有撤销/重做、语法高亮和大文件缓冲优化；Tab 焦点遍历默认关闭
 - 无网格布局、停靠或 CSS 式 flex；布局原语为锚点、HBox/VBox 和 SplitView
 - 无全屏 API，只支持窗口模式
 - 内置字体是固定 16px 位图；运行时 `Font` 可以改变 metrics/绘制，但控件尺寸仍需显式设置，也没有自动 HiDPI/字距/连字处理
-- 仅按字符换行，不做单词级断行
+- `Label` 按字符换行；`TextArea` 使用单词级换行
+- `RichTextView` 还没有行内图片、可折叠 block，以及表格行列合并
 - 旧接口 `setFontRenderer()` 按每字符 8px 测量；需要真实 metrics 请用 `setFont()`
 - DropDown / ComboBox 的展开列表画在控件内部，后添加的重叠兄弟控件可能盖住它
 - 按需重绘是整窗级的，没有局部脏矩形
