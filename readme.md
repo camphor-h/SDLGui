@@ -492,7 +492,7 @@ win.setBackgroundColor(sdlgui::Color(30, 30, 40));
 | `handle()` | `SDL_Window*` | Get native SDL window handle |
 | `renderer()` | `SDL_Renderer*` | Get native SDL renderer |
 
-Borderless `Custom` / `Hidden` windows use native edge hit-testing: hovering the outer 6px (edges and corners) shows the OS resize cursor and dragging resizes the window. Call `setResizable(false)` to disable it.
+Borderless `Custom` / `Hidden` windows use native edge hit-testing: hovering the outer 6px (edges and corners) shows the OS resize cursor and dragging resizes the window. Call `setResizable(false)` to disable it. Switching title bar modes at runtime installs or removes the hit test automatically.
 
 The custom title bar can show an icon on the left. For single-file distribution, embed a PNG in the executable instead of shipping an `.ico`:
 
@@ -1731,7 +1731,7 @@ win.setBackgroundColor(sdlgui::Color(30, 30, 40));
 | `handle()` | `SDL_Window*` | 获取原生 SDL 窗口句柄 |
 | `renderer()` | `SDL_Renderer*` | 获取原生 SDL 渲染器 |
 
-无边框的 `Custom` / `Hidden` 窗口使用原生边缘命中测试：鼠标进入外侧 6px（边和角）会显示系统缩放光标，拖动即可缩放。调用 `setResizable(false)` 可关闭。
+无边框的 `Custom` / `Hidden` 窗口使用原生边缘命中测试：鼠标进入外侧 6px（边和角）会显示系统缩放光标，拖动即可缩放。调用 `setResizable(false)` 可关闭。运行时切换标题栏模式会自动安装或移除命中测试。
 
 自绘标题栏支持左侧图标。单文件分发时把 PNG 编进程序，不要附带 `.ico`：
 

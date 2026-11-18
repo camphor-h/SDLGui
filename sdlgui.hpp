@@ -1762,6 +1762,7 @@ private:
     void layoutRoot();
     Rect titleIconRect() const;
     void ensureTitleIconTexture();
+    void updateHitTest();
     bool handleTitleBarEvent(const SDL_Event& ev, int mx, int my);
     void forgetWidget(Widget* w);
     bool anyContinuousRedraw(Widget* w) const;
@@ -7956,10 +7957,8 @@ Window::Window(const char* title, int w, int h, TitleBarMode mode)
         SDL_SetWindowBordered(sdlWindow_, false);
         if (mode == TitleBarMode::Custom)
             titleBarHeight_ = 30;
-
-        //Borderless windows need explicit edge hit-testing for OS resize.
-        SDL_SetWindowHitTest(sdlWindow_, &Window::hitTest, this);
     }
+    updateHitTest();
 
     //Use the real window size (mobile platforms ignore the requested size).
     SDL_GetWindowSize(sdlWindow_, &w, &h);
@@ -7968,9 +7967,20 @@ Window::Window(const char* title, int w, int h, TitleBarMode mode)
     applyPresentation();
 }
 
-SDL_HitTestResult SDLCALL Window::hitTest(SDL_Window* sdlWindow,
-                                          const SDL_Point* area, void* data)
+void Window::updateHitTest()
 {
+    if (!sdlWindow_) return;
+
+    //Borderless modes need explicit edge hit-testing for OS resize. System
+    //mode lets the native frame handle it.
+    if (titleBarMode_ == TitleBarMode::System)
+        SDL_SetWindowHitTest(sdlWindow_, nullptr, nullptr);
+    else
+        SDL_SetWindowHitTest(sdlWindow_, &Window::hitTest, this);
+}
+
+SDL_HitTestResult SDLCALL Window::hitTest(SDL_Window* sdlWindow,
+                                          const SDL_Point* area, void* data){
     auto* self = static_cast<Window*>(data);
     if (!self || !self->resizable_)
         return SDL_HITTEST_NORMAL;
@@ -8206,6 +8216,7 @@ void Window::setTitleBarMode(TitleBarMode mode)
     {
         titleBarHeight_ = (mode == TitleBarMode::Custom) ? 30 : 0;
     }
+    updateHitTest();
     layoutRoot();
 
     if (!shown_ && sdlWindow_)
