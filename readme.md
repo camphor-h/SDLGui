@@ -155,6 +155,7 @@ All UI elements inherit from `Widget`. It provides:
 | `onClick` | `void(MouseEvent&)` | Press + release within bounds |
 | `onMouseEnter` | `void(MouseEvent&)` | Mouse enters widget area |
 | `onMouseLeave` | `void(MouseEvent&)` | Mouse leaves widget area |
+| `onLongPress` | `void(MouseEvent&)` | Touch long press (no click is generated). If unset and `onContextMenu` is set, long press opens the context menu |
 | `onKeyDown` | `void(KeyEvent&)` | Key pressed |
 | `onKeyUp` | `void(KeyEvent&)` | Key released |
 | `onFocus` | `void()` | Widget receives keyboard focus |
@@ -252,6 +253,26 @@ auto* editor  = split->addChild<sdlgui::VBox>(); // second visible child
 ```
 
 `SideBySide` splits left/right; `Stacked` splits top/bottom. Drag the divider to resize; `setMinPaneSize()` limits both panes.
+
+**Drawer**
+
+A full-size overlay panel with a scrim. Add it as the last child of the root so it covers the other widgets:
+
+```cpp
+auto* drawer = root.addChild<sdlgui::Drawer>();
+drawer->setAnchors(sdlgui::AnchorLeft | sdlgui::AnchorTop |
+                   sdlgui::AnchorRight | sdlgui::AnchorBottom);
+drawer->setPanelWidth(260);
+drawer->setSide(sdlgui::Drawer::Side::Left);
+
+auto* list = drawer->panel()->addChild<sdlgui::ListBox>();
+list->pos(10, 10)->sz(240, 400);
+
+drawer->open();    // or close() / toggle()
+drawer->onOpenChanged = [](bool open) { /* ... */ };
+```
+
+Clicks on the scrim close the drawer without activating the widget underneath. The panel content is a normal widget tree (`drawer->panel()`).
 
 #### Label
 
@@ -513,6 +534,9 @@ app.run();  // Blocks until quit
 | `valid()` | `bool` | Whether `SDL_Init` succeeded |
 | `setFPS(fps)` | `void` | Set target FPS (0 = unlimited, default 60) |
 | `fps()` | `int` | Get current target FPS |
+| `setTouchMode(bool)` | `void` | Force mobile/touch behavior |
+| `setTouchTargetPadding(px)` | `void` | Extra hit-test padding in touch mode |
+| `setKeyboardInset(px)` | `void` | Reserve bottom space for an on-screen keyboard |
 
 **Callbacks:**
 
@@ -594,7 +618,7 @@ dd->onItemSelected = [](int index) { /* ... */ };
 | `setSelectedIndex(int)` | `void` | Set selected index |
 | `onItemSelected` | callback | Fired on selection |
 
-The expanded list is rendered as an overlay above all regular widgets, including siblings added later. Clicks inside the list take priority; clicking outside only dismisses the list without activating the widget underneath.
+The expanded list is rendered as an overlay above all regular widgets, including siblings added later. Clicks inside the list take priority; clicking outside only dismisses the list without activating the widget underneath. If there is not enough space below, the list flips above the control.
 
 #### ComboBox
 
@@ -1370,6 +1394,7 @@ button->onClick = [](MouseEvent& e) { /* ... */ };
 | `onClick` | `void(MouseEvent&)` | 按下+释放且在范围内 |
 | `onMouseEnter` | `void(MouseEvent&)` | 鼠标进入控件区域 |
 | `onMouseLeave` | `void(MouseEvent&)` | 鼠标离开控件区域 |
+| `onLongPress` | `void(MouseEvent&)` | 触摸长按（不会再触发点击）；未设置且存在 `onContextMenu` 时，长按会打开上下文菜单 |
 | `onKeyDown` | `void(KeyEvent&)` | 按键按下 |
 | `onKeyUp` | `void(KeyEvent&)` | 按键释放 |
 | `onFocus` | `void()` | 控件获得键盘焦点 |
@@ -1467,6 +1492,26 @@ auto* editor  = split->addChild<sdlgui::VBox>(); // 第二个可见子控件
 ```
 
 `SideBySide` 左右分栏，`Stacked` 上下分栏。拖动分隔条调整比例；`setMinPaneSize()` 限制两侧最小尺寸。
+
+**Drawer（抽屉）**
+
+带遮罩的全尺寸覆盖面板，适合移动端侧边栏。作为 root 的最后一个子控件添加，确保覆盖其他控件：
+
+```cpp
+auto* drawer = root.addChild<sdlgui::Drawer>();
+drawer->setAnchors(sdlgui::AnchorLeft | sdlgui::AnchorTop |
+                   sdlgui::AnchorRight | sdlgui::AnchorBottom);
+drawer->setPanelWidth(260);
+drawer->setSide(sdlgui::Drawer::Side::Left);
+
+auto* list = drawer->panel()->addChild<sdlgui::ListBox>();
+list->pos(10, 10)->sz(240, 400);
+
+drawer->open();    // 或 close() / toggle()
+drawer->onOpenChanged = [](bool open) { /* ... */ };
+```
+
+点击遮罩会关闭抽屉，不会误触下面的控件。面板内容是普通控件树（`drawer->panel()`）。
 
 #### Label（文本标签）
 
@@ -1728,6 +1773,9 @@ app.run();  // 阻塞至退出
 | `valid()` | `bool` | `SDL_Init` 是否成功 |
 | `setFPS(fps)` | `void` | 设置目标帧率（0 = 不限，默认 60） |
 | `fps()` | `int` | 获取当前目标帧率 |
+| `setTouchMode(bool)` | `void` | 强制启用移动/触摸行为 |
+| `setTouchTargetPadding(px)` | `void` | 触摸模式下扩大命中区域 |
+| `setKeyboardInset(px)` | `void` | 为软键盘预留底部空间 |
 
 **回调：**
 
@@ -1809,7 +1857,7 @@ dd->onItemSelected = [](int index) { /* ... */ };
 | `setSelectedIndex(int)` | `void` | 设置选中项 |
 | `onItemSelected` | 回调 | 选中时触发 |
 
-展开列表作为覆盖层绘制在所有普通控件之上，后添加的重叠兄弟控件也不会盖住它。点击列表优先响应；点击外部只关闭列表，不会误触下面的控件。
+展开列表作为覆盖层绘制在所有普通控件之上，后添加的重叠兄弟控件也不会盖住它。点击列表优先响应；点击外部只关闭列表，不会误触下面的控件。下方空间不足时列表会向上展开。
 
 #### ComboBox（组合框）
 

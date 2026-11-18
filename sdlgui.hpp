@@ -398,6 +398,7 @@ public:
     std::function<void(MouseEvent&)> onClick;
     std::function<void(MouseEvent&)> onMouseEnter;
     std::function<void(MouseEvent&)> onMouseLeave;
+    std::function<void(MouseEvent&)> onLongPress;
     std::function<void(KeyEvent&)>   onKeyDown;
     std::function<void(KeyEvent&)>   onKeyUp;
     std::function<void()>            onFocus;
@@ -553,6 +554,51 @@ private:
     int   dividerW_ = 6;
     Color dividerColor_ = Color(70, 70, 75);
     bool  dragging_ = false;
+};
+
+//==============================================================================
+// Drawer — slide-out panel with a scrim, useful for mobile sidebars
+//==============================================================================
+class Drawer : public Widget
+{
+public:
+    enum class Side { Left, Right };
+
+    explicit Drawer(Widget* parent = nullptr);
+
+    void setOpen(bool open);
+    bool isOpen() const { return open_; }
+    void open()  { setOpen(true); }
+    void close() { setOpen(false); }
+    void toggle() { setOpen(!open_); }
+
+    void setSide(Side side);
+    Side side() const { return side_; }
+
+    void setPanelWidth(int px);
+    int  panelWidth() const { return panelWidth_; }
+
+    void setScrimColor(Color color);
+    void setPanelColor(Color color);
+
+    Widget* panel() const { return panel_; }
+
+    std::function<void(bool)> onOpenChanged;
+
+    Rect panelRect() const;
+
+protected:
+    void onRender(SDL_Renderer* renderer) override;
+    bool hitTest(int absX, int absY) const override;
+    void layoutChildren() override;
+
+private:
+    Widget* panel_ = nullptr;
+    bool    open_ = false;
+    Side    side_ = Side::Left;
+    int     panelWidth_ = 280;
+    Color   scrimColor_ = Color(0, 0, 0, 150);
+    Color   panelColor_ = Color(32, 32, 38);
 };
 
 //==============================================================================
@@ -1113,6 +1159,7 @@ private:
     int selected_ = -1;
     bool expanded_ = false;
     int listH_ = 0;
+    Rect popupListRect() const;
     Color bgColor_ = Color(50, 50, 50);
     Color textColor_ = Color::White;
     Color borderColor_ = Color(80, 80, 80);
@@ -1176,6 +1223,7 @@ private:
     bool expanded_ = false;
     int listH_ = 0;
     bool focused_ = false;
+    Rect popupListRect() const;
     Color bgColor_ = Color::White;
     Color textColor_ = Color::Black;
     Color borderColor_ = Color(140, 140, 140);
@@ -1763,6 +1811,15 @@ public:
     void    setTouchMode(bool enabled);
     bool    touchMode() const { return touchMode_; }
 
+    //Extra hit-test padding in touch mode (logical px). Helps small controls
+    //without changing their visual size.
+    void    setTouchTargetPadding(int px);
+    int     touchTargetPadding() const { return touchPadding_; }
+
+    //Reserve space for an on-screen keyboard on all windows.
+    void    setKeyboardInset(int px);
+    int     keyboardInset() const { return keyboardInset_; }
+
     void    setUseSafeArea(bool enabled);
     bool    useSafeArea() const { return useSafeArea_; }
 
@@ -1792,6 +1849,8 @@ private:
     float uiScale_ = 1.0f;
     bool touchMode_ = false;
     bool useSafeArea_ = false;
+    int  touchPadding_ = 6;
+    int  keyboardInset_ = 0;
     std::vector<std::unique_ptr<Window>> windows_;
     Widget* focused_  = nullptr;
     Widget* hovered_  = nullptr;
@@ -1814,6 +1873,8 @@ private:
         float       velocityX = 0.0f, velocityY = 0.0f;
         Widget*     target = nullptr;
         Widget*     panTarget = nullptr;
+        Widget*     longPressTarget = nullptr;
+        bool        longPressFired = false;
     };
 
     struct InertiaState
@@ -1838,6 +1899,7 @@ private:
     void    ensureWidgetVisible(Widget* widget);
     void    widgetDestroyed(Widget* w);
     bool    closePopups(Widget* w, int absX, int absY);
+    void    showContextMenu(Window* win, Widget* target, MouseEvent& me);
     void    processEvent(const SDL_Event& ev);
     void    handleMouseEvent(const SDL_Event& ev);
     void    handleTouchEvent(const SDL_Event& ev);
@@ -2879,10 +2941,16 @@ void Widget::requestRedraw()
 bool Widget::hitTest(int absX, int absY) const
 {
     if (!visible_ || !enabled_) return false;
-    int ax = absoluteX();
-    int ay = absoluteY();
-    return absX >= ax && absX < ax + width_ &&
-           absY >= ay && absY < ay + height_;
+
+    int pad = 0;
+    if (auto* app = Application::instance())
+        if (app->touchMode())
+            pad = app->touchTargetPadding();
+
+    int ax = absoluteX() - pad;
+    int ay = absoluteY() - pad;
+    return absX >= ax && absX < ax + width_ + pad * 2 &&
+           absY >= ay && absY < ay + height_ + pad * 2;
 }
 
 void Widget::onMouseWheel(int delta)
@@ -3496,6 +3564,130 @@ void SplitView::onRender(SDL_Renderer* renderer)
     SDL_SetRenderDrawColor(renderer,
         dividerColor_.r, dividerColor_.g, dividerColor_.b, dividerColor_.a);
     SDL_RenderFillRect(renderer, &dr);
+}
+
+//==============================================================================
+// Drawer
+//==============================================================================
+Drawer::Drawer(Widget* parent)
+    : Widget(parent)
+{
+    panel_ = addChild<Widget>();
+    panel_->setPosition(0, 0);
+    visible_ = false;
+    focusable_ = false;
+
+    onMouseDown = [this](MouseEvent& e)
+    {
+        Rect pr = panelRect();
+        if (e.x < pr.x || e.x >= pr.x + pr.w ||
+            e.y < pr.y || e.y >= pr.y + pr.h)
+        {
+            close();
+        }
+    };
+}
+
+Rect Drawer::panelRect() const
+{
+    int pw = std::min(std::max(0, panelWidth_), width_);
+    int px = (side_ == Side::Left) ? 0 : width_ - pw;
+    return { px, 0, pw, height_ };
+}
+
+void Drawer::setOpen(bool open)
+{
+    if (open_ == open) return;
+    open_ = open;
+    visible_ = open;
+    if (panel_) panel_->setVisible(open);
+
+    markDirty();
+    requestRedraw();
+    if (onOpenChanged) onOpenChanged(open);
+
+    if (!open)
+    {
+        //Do not keep focus (and an on-screen keyboard) on hidden panel content.
+        if (auto* app = Application::instance())
+        {
+            Widget* f = app->focused();
+            for (Widget* p = f; p; p = p->parent())
+            {
+                if (p == this)
+                {
+                    app->setFocus(nullptr);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+void Drawer::setSide(Side side)
+{
+    if (side_ == side) return;
+    side_ = side;
+    markDirty();
+    relayout();
+}
+
+void Drawer::setPanelWidth(int px)
+{
+    if (px < 0) px = 0;
+    if (panelWidth_ == px) return;
+    panelWidth_ = px;
+    markDirty();
+    relayout();
+}
+
+void Drawer::setScrimColor(Color color)
+{
+    scrimColor_ = color;
+    markDirty();
+}
+
+void Drawer::setPanelColor(Color color)
+{
+    panelColor_ = color;
+    markDirty();
+}
+
+void Drawer::layoutChildren()
+{
+    if (!panel_) return;
+    Rect pr = panelRect();
+    panel_->setPosition(pr.x, pr.y);
+    panel_->setSize(pr.w, pr.h);
+}
+
+void Drawer::onRender(SDL_Renderer* renderer)
+{
+    if (!visible_ || !open_ || !panel_) return;
+
+    Rect r = absoluteRect();
+    detail::ClipGuard clip(renderer, r.x, r.y, r.w, r.h);
+
+    SDL_SetRenderDrawColor(renderer, scrimColor_.r, scrimColor_.g,
+                           scrimColor_.b, scrimColor_.a);
+    SDL_FRect scrim = { (float)r.x, (float)r.y, (float)r.w, (float)r.h };
+    SDL_RenderFillRect(renderer, &scrim);
+
+    Rect pr = panelRect();
+    SDL_FRect panelBg = { (float)(r.x + pr.x), (float)(r.y + pr.y),
+                          (float)pr.w, (float)pr.h };
+    SDL_SetRenderDrawColor(renderer, panelColor_.r, panelColor_.g,
+                           panelColor_.b, panelColor_.a);
+    SDL_RenderFillRect(renderer, &panelBg);
+
+    panel_->onRender(renderer);
+    dirty_ = false;
+}
+
+bool Drawer::hitTest(int absX, int absY) const
+{
+    if (!open_ || !visible_) return false;
+    return Widget::hitTest(absX, absY);
 }
 
 //==============================================================================
@@ -4823,16 +5015,26 @@ DropDown::DropDown(Widget* parent)
     height_ = 24;
     onMouseDown = [this](MouseEvent& e)
     {
-        (void)e;
-        if (expanded_ && e.y > height_)
+        if (expanded_ && !items_.empty())
         {
-            int idx = (e.y - height_) / 20;
-            if (idx >= 0 && idx < (int)items_.size())
+            Rect lr = popupListRect();
+            int localTop = lr.y - absoluteY();
+            int lh = (int)items_.size() * 20;
+            if (e.y >= localTop && e.y < localTop + lh)
             {
-                selected_ = idx;
-                if (onItemSelected) onItemSelected(idx);
+                int idx = (e.y - localTop) / 20;
+                if (idx >= 0 && idx < (int)items_.size())
+                {
+                    selected_ = idx;
+                    if (onItemSelected) onItemSelected(idx);
+                }
+                expanded_ = false;
+                listH_ = 0;
+                markDirty();
+                return;
             }
         }
+
         expanded_ = !expanded_;
         if (expanded_)
             listH_ = (int)items_.size() * 20;
@@ -4877,15 +5079,29 @@ void DropDown::setSelectedIndex(int index)
     }
 }
 
+Rect DropDown::popupListRect() const
+{
+    int lh = (int)items_.size() * 20;
+    if (lh <= 0) return { 0, 0, 0, 0 };
+
+    Rect r = absoluteRect();
+    int y = r.y + r.h;
+    if (Window* win = getWindow())
+    {
+        if (y + lh > win->clientHeight() && r.y - lh >= 0)
+            y = r.y - lh;
+    }
+    return { r.x, y, r.w, lh };
+}
+
 bool DropDown::hitTest(int absX, int absY) const
 {
-    //include expanded list area
+    //include expanded list area (above or below the button)
     if (expanded_)
     {
-        int ax = absoluteX();
-        int ay = absoluteY();
-        int h = height_ + listH_;
-        if (absX >= ax && absX < ax + width_ && absY >= ay && absY < ay + h)
+        Rect lr = popupListRect();
+        if (lr.w > 0 && absX >= lr.x && absX < lr.x + lr.w &&
+            absY >= lr.y && absY < lr.y + lr.h)
             return true;
     }
     return Widget::hitTest(absX, absY);
@@ -4927,16 +5143,16 @@ void DropDown::renderPopupOverlay(SDL_Renderer* renderer, int offX, int offY)
 {
     if (!visible_ || !expanded_ || items_.empty()) return;
 
-    Rect r = absoluteRect();
-    int lx = r.x + offX;
-    int ly = r.y + r.h + offY;
-    int lh = (int)items_.size() * 20;
+    Rect lr = popupListRect();
+    int lx = lr.x + offX;
+    int ly = lr.y + offY;
+    int lh = lr.h;
 
-    detail::ClipGuard listClip(renderer, lx, ly, r.w, lh);
+    detail::ClipGuard listClip(renderer, lx, ly, lr.w, lh);
 
     SDL_SetRenderDrawColor(renderer, popupColor_.r, popupColor_.g,
                            popupColor_.b, popupColor_.a);
-    SDL_FRect listBg = { (float)lx, (float)ly, (float)r.w, (float)lh };
+    SDL_FRect listBg = { (float)lx, (float)ly, (float)lr.w, (float)lh };
     SDL_RenderFillRect(renderer, &listBg);
 
     for (int i = 0; i < (int)items_.size(); i++)
@@ -4946,7 +5162,7 @@ void DropDown::renderPopupOverlay(SDL_Renderer* renderer, int offX, int offY)
         {
             SDL_SetRenderDrawColor(renderer, selectionColor_.r, selectionColor_.g,
                                    selectionColor_.b, selectionColor_.a);
-            SDL_FRect sel = { (float)lx, (float)iy, (float)r.w, 20.0f };
+            SDL_FRect sel = { (float)lx, (float)iy, (float)lr.w, 20.0f };
             SDL_RenderFillRect(renderer, &sel);
         }
         detail::drawText(renderer, items_[i].c_str(), lx + 4, iy + 2, textColor_);
@@ -4976,32 +5192,41 @@ ComboBox::ComboBox(Widget* parent)
             expanded_ = !expanded_;
             if (expanded_) listH_ = (int)items_.size() * 20;
             else           listH_ = 0;
+            markDirty();
+            return;
         }
-        else if (expanded_ && e.y > height_)
+
+        if (expanded_ && !items_.empty())
         {
-            int idx = (e.y - height_) / 20;
-            if (idx >= 0 && idx < (int)items_.size())
+            Rect lr = popupListRect();
+            int localTop = lr.y - absoluteY();
+            int lh = (int)items_.size() * 20;
+            if (e.y >= localTop && e.y < localTop + lh)
             {
-                selected_ = idx;
-                text_ = items_[idx];
-                cursorPos_ = (int)text_.size();
-                expanded_ = false;
-                listH_ = 0;
-                if (onItemSelected) onItemSelected(idx);
+                int idx = (e.y - localTop) / 20;
+                if (idx >= 0 && idx < (int)items_.size())
+                {
+                    selected_ = idx;
+                    text_ = items_[idx];
+                    cursorPos_ = (int)text_.size();
+                    expanded_ = false;
+                    listH_ = 0;
+                    if (onItemSelected) onItemSelected(idx);
+                }
+                markDirty();
+                return;
             }
         }
-        else
+
+        //click inside the text area: place cursor at the clicked column
+        int targetX = e.x - 4;
+        cursorPos_ = 0;
+        while (cursorPos_ < (int)text_.size())
         {
-            //click inside the text area: place cursor at the clicked column
-            int targetX = e.x - 4;
-            cursorPos_ = 0;
-            while (cursorPos_ < (int)text_.size())
-            {
-                int next = cursorPos_ + detail::utf8CharLen(text_.c_str() + cursorPos_);
-                if (detail::textWidthTo(text_.c_str(), next) > targetX)
-                    break;
-                cursorPos_ = next;
-            }
+            int next = cursorPos_ + detail::utf8CharLen(text_.c_str() + cursorPos_);
+            if (detail::textWidthTo(text_.c_str(), next) > targetX)
+                break;
+            cursorPos_ = next;
         }
         markDirty();
     };
@@ -5095,13 +5320,29 @@ void ComboBox::moveCursorEnd()
     markDirty();
 }
 
+Rect ComboBox::popupListRect() const
+{
+    int lh = (int)items_.size() * 20;
+    if (lh <= 0) return { 0, 0, 0, 0 };
+
+    Rect r = absoluteRect();
+    int y = r.y + r.h;
+    if (Window* win = getWindow())
+    {
+        if (y + lh > win->clientHeight() && r.y - lh >= 0)
+            y = r.y - lh;
+    }
+    return { r.x, y, r.w, lh };
+}
+
 bool ComboBox::hitTest(int absX, int absY) const
 {
     if (expanded_)
     {
-        int ax = absoluteX(), ay = absoluteY();
-        int h = height_ + listH_;
-        if (absX >= ax && absX < ax + width_ && absY >= ay && absY < ay + h) return true;
+        Rect lr = popupListRect();
+        if (lr.w > 0 && absX >= lr.x && absX < lr.x + lr.w &&
+            absY >= lr.y && absY < lr.y + lr.h)
+            return true;
     }
     return Widget::hitTest(absX, absY);
 }
@@ -5159,16 +5400,16 @@ void ComboBox::renderPopupOverlay(SDL_Renderer* renderer, int offX, int offY)
 {
     if (!visible_ || !expanded_ || items_.empty()) return;
 
-    Rect r = absoluteRect();
-    int lx = r.x + offX;
-    int ly = r.y + r.h + offY;
-    int lh = (int)items_.size() * 20;
+    Rect lr = popupListRect();
+    int lx = lr.x + offX;
+    int ly = lr.y + offY;
+    int lh = lr.h;
 
-    detail::ClipGuard listClip(renderer, lx, ly, r.w, lh);
+    detail::ClipGuard listClip(renderer, lx, ly, lr.w, lh);
 
     SDL_SetRenderDrawColor(renderer, popupColor_.r, popupColor_.g,
                            popupColor_.b, popupColor_.a);
-    SDL_FRect flc = { (float)lx, (float)ly, (float)r.w, (float)lh };
+    SDL_FRect flc = { (float)lx, (float)ly, (float)lr.w, (float)lh };
     SDL_RenderFillRect(renderer, &flc);
 
     for (int i = 0; i < (int)items_.size(); i++)
@@ -5178,7 +5419,7 @@ void ComboBox::renderPopupOverlay(SDL_Renderer* renderer, int offX, int offY)
         {
             SDL_SetRenderDrawColor(renderer, selectionColor_.r, selectionColor_.g,
                                    selectionColor_.b, selectionColor_.a);
-            SDL_FRect sel = { (float)lx, (float)iy, (float)r.w, 20.0f };
+            SDL_FRect sel = { (float)lx, (float)iy, (float)lr.w, 20.0f };
             SDL_RenderFillRect(renderer, &sel);
         }
         detail::drawText(renderer, items_[i].c_str(), lx + 4, iy + 2, textColor_);
@@ -7707,6 +7948,7 @@ Window::Window(const char* title, int w, int h, TitleBarMode mode)
         uiScale_    = app->uiScale();
         touchMode_  = app->touchMode();
         useSafeArea_ = app->useSafeArea();
+        keyboardInset_ = app->keyboardInset();
     }
 
     if (mode != TitleBarMode::System)
@@ -8675,6 +8917,25 @@ void Application::setTouchMode(bool enabled)
         win->setTouchMode(enabled);
 }
 
+void Application::setTouchTargetPadding(int px)
+{
+    if (px < 0) px = 0;
+    touchPadding_ = px;
+}
+
+void Application::setKeyboardInset(int px)
+{
+    if (px < 0) px = 0;
+    keyboardInset_ = px;
+    for (auto& win : windows_)
+        win->setKeyboardInset(px);
+    if (focused_)
+    {
+        ensureWidgetVisible(focused_);
+        updateTextInputArea(focused_);
+    }
+}
+
 void Application::setUseSafeArea(bool enabled)
 {
     useSafeArea_ = enabled;
@@ -9323,9 +9584,21 @@ void Application::updateHovered(Widget* target)
     }
 }
 
+static void scrollOffsetForWidget(Widget* w, int& offX, int& offY);
+
 Widget* Application::findPanTarget(Widget* w) const
 {
     for (Widget* cur = w; cur; cur = cur->parent())
+    {
+        if (cur->canPan())
+            return cur;
+    }
+    return nullptr;
+}
+
+static Widget* nextPanAncestor(Widget* w)
+{
+    for (Widget* cur = w ? w->parent() : nullptr; cur; cur = cur->parent())
     {
         if (cur->canPan())
             return cur;
@@ -9499,6 +9772,8 @@ void Application::handleTouchEvent(const SDL_Event& ev)
         touch_.velocityY     = 0.0f;
         touch_.target        = hitTest(&win->root(), lx, ly);
         touch_.panTarget     = findPanTarget(touch_.target);
+        touch_.longPressTarget = touch_.target;
+        touch_.longPressFired  = false;
 
         //Scrollable text views delay mouse-down so a swipe pans instead of
         //starting a text selection. A long press starts selection.
@@ -9529,6 +9804,7 @@ void Application::handleTouchEvent(const SDL_Event& ev)
         {
             touch_.axisLocked = true;
             touch_.axisX = std::abs(dx) > std::abs(dy);
+            touch_.longPressTarget = nullptr;
 
             if (touch_.panTarget && touch_.panTarget->canPan())
             {
@@ -9555,15 +9831,31 @@ void Application::handleTouchEvent(const SDL_Event& ev)
 
             if (stepX != 0 || stepY != 0)
             {
-                touch_.panTarget->panBy(stepX, stepY);
+                Widget* pan = touch_.panTarget;
+                bool moved = false;
+                while (pan)
+                {
+                    if (pan->panBy(stepX, stepY))
+                    {
+                        touch_.panTarget = pan;
+                        moved = true;
+                        break;
+                    }
+                    pan = nextPanAncestor(pan);
+                }
 
                 Uint32 dtMs = now - touch_.lastMoveTicks;
-                if (dtMs > 0)
+                if (moved && dtMs > 0)
                 {
                     float vx = (float)stepX / (float)dtMs;
                     float vy = (float)stepY / (float)dtMs;
                     touch_.velocityX = touch_.velocityX * 0.65f + vx * 0.35f;
                     touch_.velocityY = touch_.velocityY * 0.65f + vy * 0.35f;
+                }
+                else if (!moved)
+                {
+                    touch_.velocityX = 0.0f;
+                    touch_.velocityY = 0.0f;
                 }
             }
             touch_.lastMoveTicks = now;
@@ -9609,6 +9901,10 @@ void Application::handleTouchEvent(const SDL_Event& ev)
             dispatchTouchMouse(SDL_EVENT_MOUSE_BUTTON_UP, lx, ly,
                                SDL_BUTTON_LEFT, 1);
         }
+        else if (touch_.longPressFired)
+        {
+            //Long press consumed the gesture; do not synthesize a click.
+        }
         else
         {
             dispatchTouchMouse(SDL_EVENT_MOUSE_BUTTON_UP, lx, ly,
@@ -9621,17 +9917,50 @@ void Application::handleTouchEvent(const SDL_Event& ev)
 
 void Application::updateTouch()
 {
-    if (!touch_.active || !touch_.pendingPress || touch_.scrolling ||
-        touch_.selecting)
+    if (!touch_.active || touch_.scrolling || touch_.selecting)
+        return;
+    if (SDL_GetTicks() - touch_.startTicks < 450)
         return;
 
-    if (SDL_GetTicks() - touch_.startTicks >= 450)
+    if (touch_.pendingPress)
     {
         touch_.pendingPress = false;
         touch_.selecting = true;
+        touch_.longPressTarget = nullptr;
         dispatchTouchMouse(SDL_EVENT_MOUSE_BUTTON_DOWN,
                            touch_.startX, touch_.startY,
                            SDL_BUTTON_LEFT, 1);
+        return;
+    }
+
+    if (!touch_.longPressFired && touch_.longPressTarget)
+    {
+        Widget* target = touch_.longPressTarget;
+        touch_.longPressFired = true;
+        touch_.longPressTarget = nullptr;
+
+        //Release the visual pressed state without generating a click.
+        cancelTouchPress();
+
+        MouseEvent me;
+        int sox = 0, soy = 0;
+        scrollOffsetForWidget(target, sox, soy);
+        me.x = touch_.lastX + sox - target->absoluteX();
+        me.y = touch_.lastY + soy - target->absoluteY();
+        me.screenX = touch_.lastX;
+        me.screenY = touch_.lastY;
+        me.button = SDL_BUTTON_LEFT;
+        me.clicks = 1;
+        me.pointerType = PointerType::Touch;
+
+        if (target->onLongPress)
+            target->onLongPress(me);
+        else if (target->onContextMenu)
+        {
+            Window* win = target->getWindow();
+            if (win)
+                showContextMenu(win, target, me);
+        }
     }
 }
 
@@ -9662,7 +9991,19 @@ void Application::updateInertia()
 
         bool moved = false;
         if (stepX != 0 || stepY != 0)
-            moved = st.widget->panBy(stepX, stepY);
+        {
+            Widget* pan = st.widget;
+            while (pan)
+            {
+                if (pan->panBy(stepX, stepY))
+                {
+                    st.widget = pan;
+                    moved = true;
+                    break;
+                }
+                pan = nextPanAncestor(pan);
+            }
+        }
 
         float decay = std::pow(0.05f, dt);
         st.vx *= decay;
@@ -9692,6 +10033,8 @@ void Application::widgetDestroyed(Widget* w)
 
     if (touch_.target == w)
         touch_.target = nullptr;
+    if (touch_.longPressTarget == w)
+        touch_.longPressTarget = nullptr;
     if (touch_.panTarget == w)
         touch_ = TouchGesture{};
 
@@ -9728,6 +10071,24 @@ bool Application::closePopups(Widget* w, int absX, int absY)
     }
 
     return closed;
+}
+
+void Application::showContextMenu(Window* win, Widget* target, MouseEvent& me)
+{
+    if (!win || !target || !target->onContextMenu) return;
+
+    if (!win->contextMenu_)
+    {
+        win->contextMenu_ = std::unique_ptr<ContextMenu>(new ContextMenu(nullptr));
+        applyTheme(*win->contextMenu_, win->theme_);
+    }
+    win->contextMenu_->clear();
+    target->onContextMenu(me, *win->contextMenu_);
+    if (!win->contextMenu_->items_.empty())
+    {
+        win->contextMenu_->show(me.screenX, me.screenY);
+        win->requestRedraw();
+    }
 }
 
 void Application::setFocus(Widget* w, bool fromKeyboard)
@@ -10083,21 +10444,7 @@ void Application::handleMouseEvent(const SDL_Event& ev)
         if (target->onMouseDown) target->onMouseDown(me);
         //right-click → context menu
         if (pressedWidget_ == target && me.button == SDL_BUTTON_RIGHT)
-        {
-            if (!win->contextMenu_)
-            {
-                win->contextMenu_ = std::unique_ptr<ContextMenu>(new ContextMenu(nullptr));
-                applyTheme(*win->contextMenu_, win->theme_);
-            }
-            win->contextMenu_->clear();
-            if (target->onContextMenu)
-                target->onContextMenu(me, *win->contextMenu_);
-            if (!win->contextMenu_->items_.empty())
-            {
-                win->contextMenu_->show(mx, my);
-                win->requestRedraw();
-            }
-        }
+            showContextMenu(win, target, me);
         break;
 
     case SDL_EVENT_MOUSE_MOTION:
