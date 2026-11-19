@@ -952,6 +952,8 @@ Children are laid out vertically inside one background/border. Nested cards are 
 ```cpp
 sdlgui::RichTextAction allow;
 allow.text = "Allow";
+allow.textAlign = sdlgui::RichTextAlign::Left;
+allow.paddingX = 12;
 allow.onClick = [] { /* ... */ };
 
 sdlgui::RichTextAction deny;
@@ -2269,6 +2271,8 @@ rt->addBlock(card);
 ```cpp
 sdlgui::RichTextAction allow;
 allow.text = "允许";
+allow.textAlign = sdlgui::RichTextAlign::Left;
+allow.paddingX = 12;
 allow.onClick = [] { /* ... */ };
 
 sdlgui::RichTextAction deny;

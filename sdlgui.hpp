@@ -1488,6 +1488,9 @@ struct RichTextAction
     Color background = Color(0, 0, 0, 0); // alpha 0 = view default
     Color textColor = Color(0, 0, 0, 0);  // alpha 0 = view default
     bool  enabled = true;
+
+    RichTextAlign textAlign = RichTextAlign::Center;
+    int   paddingX = 12;
 };
 
 struct RichTextBlock
@@ -8076,7 +8079,23 @@ void RichTextView::onRender(SDL_Renderer* renderer)
         if (!ar.action.text.empty())
         {
             int tw = detail::textWidth(ar.action.text.c_str());
+            int pad = std::max(0, ar.action.paddingX);
             int tx = ax + (ar.rect.w - tw) / 2;
+
+            switch (ar.action.textAlign)
+            {
+            case RichTextAlign::Left:
+                tx = ax + pad;
+                break;
+            case RichTextAlign::Right:
+                tx = ax + ar.rect.w - tw - pad;
+                break;
+            case RichTextAlign::Center:
+            default:
+                tx = ax + (ar.rect.w - tw) / 2;
+                break;
+            }
+
             int ty = ay + (ar.rect.h - currentFont()->lineHeight()) / 2;
             detail::drawText(renderer, ar.action.text.c_str(), tx, ty, fg);
         }
