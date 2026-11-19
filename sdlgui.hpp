@@ -1436,7 +1436,9 @@ enum class RichBlockType
     CodeBlock,
     Quote,
     ListItem,
-    Table
+    Table,
+    Separator,
+    Actions
 };
 
 enum class RichTextAlign
@@ -1479,6 +1481,15 @@ struct RichTable
     int  cellPadding = 6;
 };
 
+struct RichTextAction
+{
+    std::string text;
+    std::function<void()> onClick;
+    Color background = Color(0, 0, 0, 0); // alpha 0 = view default
+    Color textColor = Color(0, 0, 0, 0);  // alpha 0 = view default
+    bool  enabled = true;
+};
+
 struct RichTextBlock
 {
     RichBlockType type = RichBlockType::Paragraph;
@@ -1497,6 +1508,26 @@ struct RichTextBlock
     RichTextAlign align = RichTextAlign::Left;
     int  maxWidth = 0;
     int  paddingX = 0;
+
+    //Card/group: children are laid out vertically inside one background and
+    //border. paddingY is used as the top/bottom inner padding.
+    bool isCard = false;
+    int  paddingY = 10;
+    int  borderWidth = 0;
+    Color borderColor = Color(0, 0, 0, 0);
+    std::vector<RichTextBlock> children;
+
+    //Separator
+    int   separatorThickness = 1;
+    Color separatorColor = Color(0, 0, 0, 0); // alpha 0 = view default
+    int   separatorMarginTop = 6;
+    int   separatorMarginBottom = 6;
+
+    //Actions
+    std::vector<RichTextAction> actions;
+    bool actionsVertical = true;
+    int  actionHeight = 32;
+    int  actionGap = 8;
 };
 
 class RichTextView : public ScrollView
@@ -1527,6 +1558,8 @@ public:
     void setCodeBorder(Color color);
     void setQuoteBarColor(Color color);
     void setTableColors(Color row, Color header, Color border);
+    void setSeparatorColor(Color color);
+    void setActionColors(Color background, Color text);
     void setSelectionColor(Color color);
     void setSelectable(bool on);
     bool selectable() const { return selectable_; }
@@ -1584,6 +1617,35 @@ private:
     {
         int  block = 0;
         Rect rect;
+        Color background = Color(0, 0, 0, 0);
+        Color borderColor = Color(0, 0, 0, 0);
+        int   borderWidth = 0;
+        bool  code = false;
+        bool  quote = false;
+    };
+
+    struct SeparatorRect
+    {
+        Rect  rect;
+        Color color;
+    };
+
+    struct ActionRect
+    {
+        Rect          rect;
+        RichTextAction action;
+    };
+
+    struct LayoutItem
+    {
+        enum class Type { Block, CardBegin, CardEnd, Separator, Actions };
+        Type type = Type::Block;
+        const RichTextBlock* block = nullptr;
+        int  blockId = 0;
+        int  x = 0;
+        int  avail = 0;
+        int  docStart = -1;
+        bool hasText = false;
     };
 
     struct TableRect
@@ -1604,22 +1666,31 @@ private:
     Font* runFont(const RichTextStyle& style) const;
     void  ensureLayout();
     void  buildLayout();
-    void  appendBlockLines(int blockIndex, int& y, int& maxRight,
-                           int& docCursor, int wrapWidth);
-    void  appendWrappedLine(int blockIndex, const std::vector<Glyph>& glyphs,
+    void  buildLayoutItems(const RichTextBlock& block, int blockId,
+                           int x, int avail, std::vector<LayoutItem>& out) const;
+    void  appendBlockLines(const RichTextBlock& block, int blockId, int baseX,
+                           int wrapWidth, int& y, int& maxRight, int& docCursor);
+    void  appendWrappedLine(const RichTextBlock& block, int blockId, int baseX,
+                            const std::vector<Glyph>& glyphs,
                             int start, int end, int& y, int& maxRight,
                             bool code);
-    void  appendEmptyLine(int blockIndex, int& y);
-    void  appendTableLines(int blockIndex, int& y, int& maxRight, int& docCursor);
-    void  appendCellLines(int blockIndex, const std::vector<RichTextRun>& runs,
+    void  appendEmptyLine(const RichTextBlock& block, int blockId, int baseX,
+                          int& y);
+    void  appendTableLines(const RichTextBlock& block, int blockId,
+                           int x, int avail, int& y, int& maxRight,
+                           int& docCursor);
+    void  appendCellLines(int blockId, const std::vector<RichTextRun>& runs,
                           int x, int y, int width, int& height,
                           int& maxRight, int& docCursor);
     int   hitTestDocOffset(int localX, int localY) const;
+    int   actionAt(int contentX, int contentY) const;
     void  normalizeSelection(int& start, int& end) const;
 
     std::vector<RichTextBlock> blocks_;
     std::vector<RichLine> lines_;
     std::vector<BlockRect> blockRects_;
+    std::vector<SeparatorRect> separatorRects_;
+    std::vector<ActionRect> actionRects_;
     std::vector<TableRect> tableRects_;
     std::vector<LinkRect>  linkRects_;
     std::string            docText_;
@@ -1634,12 +1705,19 @@ private:
     Color    tableRowBackground_ = Color(0, 0, 0, 0);
     Color    tableHeaderBackground_ = Color(52, 52, 58);
     Color    tableBorder_ = Color(80, 80, 86);
+    Color    separatorColor_ = Color(70, 70, 75);
+    Color    actionBackground_ = Color(70, 70, 80);
+    Color    actionTextColor_ = Color::White;
+    Color    actionDisabledBackground_ = Color(50, 50, 55);
+    Color    actionDisabledText_ = Color(130, 130, 130);
     Color    selectionColor_ = Color(50, 100, 180, 150);
 
     bool     selectable_ = true;
     bool     selecting_ = false;
     int      selAnchor_ = -1;
     int      selCursor_ = -1;
+    int      hoveredAction_ = -1;
+    int      pressedAction_ = -1;
 
     bool     layoutDirty_ = true;
     int      layoutWidth_ = -1;
@@ -6707,6 +6785,15 @@ RichTextView::RichTextView(Widget* parent)
         int mx = e.x + scrollX_;
         int my = e.y + scrollY_;
 
+        int ai = actionAt(mx, my);
+        if (ai >= 0)
+        {
+            if (actionRects_[ai].action.enabled)
+                pressedAction_ = ai;
+            markDirty();
+            return;
+        }
+
         for (const auto& link : linkRects_)
         {
             if (mx >= link.rect.x && mx < link.rect.x + link.rect.w &&
@@ -6738,7 +6825,17 @@ RichTextView::RichTextView(Widget* parent)
     onMouseMove = [this, baseMove](MouseEvent& e)
     {
         baseMove(e);
-        if (draggingScrollbar() || !selecting_) return;
+        if (draggingScrollbar()) return;
+
+        ensureLayout();
+        int ai = actionAt(e.x + scrollX_, e.y + scrollY_);
+        if (ai != hoveredAction_)
+        {
+            hoveredAction_ = ai;
+            markDirty();
+        }
+
+        if (!selecting_) return;
         int off = hitTestDocOffset(e.x, e.y);
         if (off >= 0)
         {
@@ -6751,7 +6848,38 @@ RichTextView::RichTextView(Widget* parent)
     onMouseUp = [this, baseUp](MouseEvent& e)
     {
         baseUp(e);
+
+        if (pressedAction_ >= 0)
+        {
+            int ai = actionAt(e.x + scrollX_, e.y + scrollY_);
+            int pressed = pressedAction_;
+            pressedAction_ = -1;
+            selecting_ = false;
+            markDirty();
+
+            if (ai == pressed && pressed >= 0 &&
+                pressed < (int)actionRects_.size())
+            {
+                RichTextAction action = actionRects_[pressed].action;
+                if (action.enabled && action.onClick)
+                {
+                    auto cb = action.onClick;
+                    cb();
+                }
+            }
+            return;
+        }
+
         selecting_ = false;
+    };
+
+    onMouseLeave = [this](MouseEvent&)
+    {
+        if (hoveredAction_ >= 0)
+        {
+            hoveredAction_ = -1;
+            markDirty();
+        }
     };
 }
 
@@ -6906,6 +7034,19 @@ void RichTextView::setTableColors(Color row, Color header, Color border)
     markDirty();
 }
 
+void RichTextView::setSeparatorColor(Color color)
+{
+    separatorColor_ = color;
+    markDirty();
+}
+
+void RichTextView::setActionColors(Color background, Color text)
+{
+    actionBackground_ = background;
+    actionTextColor_ = text;
+    markDirty();
+}
+
 void RichTextView::setSelectionColor(Color color)
 {
     selectionColor_ = color;
@@ -6959,6 +7100,18 @@ std::string RichTextView::selectedText() const
     normalizeSelection(a, b);
     if (b <= a) return {};
     return docText_.substr((std::size_t)a, (std::size_t)(b - a));
+}
+
+int RichTextView::actionAt(int contentX, int contentY) const
+{
+    for (std::size_t i = 0; i < actionRects_.size(); ++i)
+    {
+        const Rect& r = actionRects_[i].rect;
+        if (contentX >= r.x && contentX < r.x + r.w &&
+            contentY >= r.y && contentY < r.y + r.h)
+            return (int)i;
+    }
+    return -1;
 }
 
 int RichTextView::hitTestDocOffset(int localX, int localY) const
@@ -7033,34 +7186,36 @@ void RichTextView::ensureLayout()
     buildLayout();
 }
 
-void RichTextView::appendEmptyLine(int blockIndex, int& y)
+void RichTextView::appendEmptyLine(const RichTextBlock& block, int blockId,
+                                   int baseX, int& y)
 {
     RichLine line;
-    line.block = blockIndex;
-    line.x = padding_ + blocks_[blockIndex].indent;
+    line.block = blockId;
+    line.x = baseX;
     line.y = y;
     line.height = std::max(1, currentFont()->lineHeight());
     line.ascent = currentFont()->ascent();
     lines_.push_back(line);
     y += line.height + lineSpacing_;
+    (void)block;
 }
 
-void RichTextView::appendWrappedLine(int blockIndex,
+void RichTextView::appendWrappedLine(const RichTextBlock& block, int blockId,
+                                     int baseX,
                                      const std::vector<Glyph>& glyphs,
                                      int start, int end,
                                      int& y, int& maxRight, bool code)
 {
-    const RichTextBlock& block = blocks_[blockIndex];
     RichLine line;
-    line.block = blockIndex;
-    line.x = padding_ + block.indent;
+    line.block = blockId;
+    line.x = baseX;
     line.y = y;
     line.code = code || block.type == RichBlockType::CodeBlock;
     line.ascent = std::max(1, currentFont()->ascent());
 
     if (start >= end)
     {
-        appendEmptyLine(blockIndex, y);
+        appendEmptyLine(block, blockId, baseX, y);
         return;
     }
 
@@ -7119,7 +7274,7 @@ void RichTextView::appendWrappedLine(int blockIndex,
     y += lines_.back().height + lineSpacing_;
 }
 
-void RichTextView::appendCellLines(int blockIndex,
+void RichTextView::appendCellLines(int blockId,
                                    const std::vector<RichTextRun>& runs,
                                    int x, int y, int width,
                                    int& height, int& maxRight, int& docCursor)
@@ -7130,7 +7285,7 @@ void RichTextView::appendCellLines(int blockIndex,
     auto buildLine = [&](int start, int end)
     {
         RichLine line;
-        line.block = blockIndex;
+        line.block = blockId;
         line.x = x;
         line.y = y + contentY;
 
@@ -7276,10 +7431,11 @@ void RichTextView::appendCellLines(int blockIndex,
     height = contentY;
 }
 
-void RichTextView::appendTableLines(int blockIndex, int& y, int& maxRight,
-                                    int& docCursor)
+void RichTextView::appendTableLines(const RichTextBlock& block, int blockId,
+                                    int x, int avail,
+                                    int& y, int& maxRight, int& docCursor)
 {
-    const RichTable& table = blocks_[blockIndex].table;
+    const RichTable& table = block.table;
     if (table.rows.empty()) return;
 
     int cols = 0;
@@ -7287,8 +7443,7 @@ void RichTextView::appendTableLines(int blockIndex, int& y, int& maxRight,
         cols = std::max(cols, (int)row.cells.size());
     if (cols == 0) return;
 
-    int indent = blocks_[blockIndex].indent;
-    int avail = std::max(1, width_ - padding_ * 2 - indent);
+    int tableAvail = std::max(1, avail);
     int cellPad = std::max(0, table.cellPadding);
 
     std::vector<float> weights = table.columnWeights;
@@ -7306,15 +7461,15 @@ void RichTextView::appendTableLines(int blockIndex, int& y, int& maxRight,
     {
         float w = (weights[c] > 0.0f) ? weights[c] : 1.0f;
         if (c + 1 == cols)
-            colW[c] = std::max(1, avail - used);
+            colW[c] = std::max(1, tableAvail - used);
         else
         {
-            colW[c] = std::max(1, (int)(avail * w / totalWeight));
+            colW[c] = std::max(1, (int)(tableAvail * w / totalWeight));
             used += colW[c];
         }
     }
 
-    int tableLeft = padding_ + indent;
+    int tableLeft = x;
     for (int r = 0; r < (int)table.rows.size(); ++r)
     {
         const RichTableRow& row = table.rows[r];
@@ -7329,7 +7484,7 @@ void RichTextView::appendTableLines(int blockIndex, int& y, int& maxRight,
             int cellH = 0;
 
             if (c < (int)row.cells.size())
-                appendCellLines(blockIndex, row.cells[c].runs,
+                appendCellLines(blockId, row.cells[c].runs,
                                 colX + cellPad, rowTop + cellPad,
                                 contentW, cellH, maxRight, docCursor);
             else
@@ -7338,7 +7493,7 @@ void RichTextView::appendTableLines(int blockIndex, int& y, int& maxRight,
             rowHeight = std::max(rowHeight, cellH + cellPad * 2);
 
             TableRect tr;
-            tr.block = blockIndex;
+            tr.block = blockId;
             tr.row = r;
             tr.col = c;
             tr.header = table.headerRow && r == 0;
@@ -7358,13 +7513,13 @@ void RichTextView::appendTableLines(int blockIndex, int& y, int& maxRight,
         if (r + 1 < (int)table.rows.size()) ++docCursor;
     }
 
-    maxRight = std::max(maxRight, tableLeft + avail);
+    maxRight = std::max(maxRight, tableLeft + tableAvail);
 }
 
-void RichTextView::appendBlockLines(int blockIndex, int& y, int& maxRight,
-                                    int& docCursor, int wrapWidth)
+void RichTextView::appendBlockLines(const RichTextBlock& block, int blockId,
+                                    int baseX, int wrapWidth,
+                                    int& y, int& maxRight, int& docCursor)
 {
-    const RichTextBlock& block = blocks_[blockIndex];
     int avail = std::max(1, wrapWidth);
     bool code = (block.type == RichBlockType::CodeBlock);
 
@@ -7373,12 +7528,12 @@ void RichTextView::appendBlockLines(int blockIndex, int& y, int& maxRight,
     {
         if (glyphs.empty())
         {
-            appendEmptyLine(blockIndex, y);
+            appendEmptyLine(block, blockId, baseX, y);
         }
         else if (!block.wrap || code)
         {
-            appendWrappedLine(blockIndex, glyphs, 0, (int)glyphs.size(),
-                              y, maxRight, code);
+            appendWrappedLine(block, blockId, baseX, glyphs, 0,
+                              (int)glyphs.size(), y, maxRight, code);
         }
         else
         {
@@ -7404,7 +7559,7 @@ void RichTextView::appendBlockLines(int blockIndex, int& y, int& maxRight,
                         ? i : lastBreak;
                 if (end <= start) end = start + 1;
 
-                appendWrappedLine(blockIndex, glyphs, start, end,
+                appendWrappedLine(block, blockId, baseX, glyphs, start, end,
                                   y, maxRight, code);
                 start = end;
             }
@@ -7451,17 +7606,91 @@ void RichTextView::appendBlockLines(int blockIndex, int& y, int& maxRight,
     finishLine();
 }
 
+void RichTextView::buildLayoutItems(const RichTextBlock& block, int blockId,
+                                    int x, int avail,
+                                    std::vector<LayoutItem>& out) const
+{
+    if (block.isCard)
+    {
+        int cardW = (block.maxWidth > 0)
+                  ? std::min(avail, std::max(1, block.maxWidth))
+                  : avail;
+        int cardX = x;
+        if (block.align == RichTextAlign::Center)
+            cardX += (avail - cardW) / 2;
+        else if (block.align == RichTextAlign::Right)
+            cardX += avail - cardW;
+
+        LayoutItem begin;
+        begin.type = LayoutItem::Type::CardBegin;
+        begin.block = &block;
+        begin.blockId = blockId;
+        begin.x = cardX;
+        begin.avail = cardW;
+        out.push_back(begin);
+
+        int padX = std::max(0, block.paddingX);
+        int childX = cardX + padX;
+        int childW = std::max(1, cardW - padX * 2);
+        for (const auto& child : block.children)
+            buildLayoutItems(child, blockId, childX, childW, out);
+
+        LayoutItem end;
+        end.type = LayoutItem::Type::CardEnd;
+        end.block = &block;
+        end.blockId = blockId;
+        end.x = cardX;
+        end.avail = cardW;
+        out.push_back(end);
+        return;
+    }
+
+    LayoutItem item;
+    item.block = &block;
+    item.blockId = blockId;
+    item.x = x;
+    item.avail = avail;
+
+    if (block.type == RichBlockType::Separator)
+        item.type = LayoutItem::Type::Separator;
+    else if (block.type == RichBlockType::Actions)
+        item.type = LayoutItem::Type::Actions;
+    else
+    {
+        item.type = LayoutItem::Type::Block;
+        item.hasText = (block.type == RichBlockType::Table)
+                     ? !block.table.rows.empty()
+                     : true;
+    }
+
+    out.push_back(item);
+}
+
 void RichTextView::buildLayout()
 {
     lines_.clear();
     blockRects_.clear();
+    separatorRects_.clear();
+    actionRects_.clear();
     tableRects_.clear();
     linkRects_.clear();
 
-    docText_.clear();
+    std::vector<LayoutItem> items;
+    int rootAvail = std::max(1, width_ - padding_ * 2);
     for (int i = 0; i < (int)blocks_.size(); ++i)
+        buildLayoutItems(blocks_[i], i, padding_, rootAvail, items);
+
+    //Build the selectable document text and record each block's start offset.
+    docText_.clear();
+    bool firstDoc = true;
+    for (auto& item : items)
     {
-        const RichTextBlock& block = blocks_[i];
+        if (!item.hasText) continue;
+        if (!firstDoc) docText_ += '\n';
+        firstDoc = false;
+        item.docStart = (int)docText_.size();
+
+        const RichTextBlock& block = *item.block;
         if (block.type == RichBlockType::Table)
         {
             int cols = 0;
@@ -7488,33 +7717,146 @@ void RichTextView::buildLayout()
             for (const auto& run : block.runs)
                 docText_ += run.text;
         }
-        if (i + 1 < (int)blocks_.size())
-            docText_ += '\n';
     }
+
+    struct CardState
+    {
+        std::size_t rectIndex;
+        int startY;
+        int padY;
+        int marginBottom;
+    };
+    std::vector<CardState> cardStack;
 
     int y = padding_;
     int maxRight = width_;
-    int docCursor = 0;
 
-    for (int i = 0; i < (int)blocks_.size(); ++i)
+    for (const auto& item : items)
     {
-        const RichTextBlock& block = blocks_[i];
-        if (i > 0) ++docCursor;
+        const RichTextBlock& block = *item.block;
+
+        if (item.type == LayoutItem::Type::CardBegin)
+        {
+            y += block.marginTop;
+
+            BlockRect br;
+            br.block = item.blockId;
+            br.rect = { item.x, y, std::max(1, item.avail), 0 };
+            br.background = block.background;
+            br.borderColor = block.borderColor;
+            br.borderWidth = block.borderWidth;
+
+            std::size_t idx = blockRects_.size();
+            blockRects_.push_back(br);
+
+            int padY = std::max(0, block.paddingY);
+            cardStack.push_back({ idx, y, padY, block.marginBottom });
+            y += padY;
+            continue;
+        }
+
+        if (item.type == LayoutItem::Type::CardEnd)
+        {
+            if (!cardStack.empty())
+            {
+                CardState cs = cardStack.back();
+                cardStack.pop_back();
+                blockRects_[cs.rectIndex].rect.h =
+                    std::max(1, y - cs.startY + cs.padY);
+                y += cs.padY + cs.marginBottom;
+            }
+            continue;
+        }
+
+        if (item.type == LayoutItem::Type::Separator)
+        {
+            y += std::max(0, block.separatorMarginTop);
+
+            int sx = item.x + block.indent;
+            int sw = std::max(1, item.avail - block.indent);
+            int th = std::max(1, block.separatorThickness);
+            Color color = (block.separatorColor.a != 0)
+                        ? block.separatorColor : separatorColor_;
+
+            separatorRects_.push_back({ { sx, y, sw, th }, color });
+            y += th + std::max(0, block.separatorMarginBottom);
+            maxRight = std::max(maxRight, sx + sw);
+            continue;
+        }
+
+        if (item.type == LayoutItem::Type::Actions)
+        {
+            y += block.marginTop;
+
+            int padX = std::max(0, block.paddingX);
+            int ax = item.x + block.indent + padX;
+            int aw = std::max(1, item.avail - block.indent - padX * 2);
+            int ah = std::max(1, block.actionHeight);
+            int gap = std::max(0, block.actionGap);
+            int count = (int)block.actions.size();
+
+            int totalH = 0;
+            if (count > 0)
+            {
+                if (block.actionsVertical)
+                {
+                    totalH = count * ah + (count - 1) * gap;
+                    for (int i = 0; i < count; ++i)
+                    {
+                        ActionRect ar;
+                        ar.rect = { ax, y + i * (ah + gap), aw, ah };
+                        ar.action = block.actions[i];
+                        actionRects_.push_back(std::move(ar));
+                    }
+                }
+                else
+                {
+                    totalH = ah;
+                    int bw = (aw - gap * (count - 1)) / count;
+                    if (bw < 1) bw = 1;
+                    for (int i = 0; i < count; ++i)
+                    {
+                        ActionRect ar;
+                        ar.rect = { ax + i * (bw + gap), y, bw, ah };
+                        ar.action = block.actions[i];
+                        actionRects_.push_back(std::move(ar));
+                    }
+                    maxRight = std::max(maxRight, ax + count * bw + (count - 1) * gap);
+                }
+            }
+
+            y += totalH + block.marginBottom;
+            maxRight = std::max(maxRight, ax + aw);
+            continue;
+        }
+
+        //Normal text, code, quote, list or table block.
         y += block.marginTop;
 
         int startY = y;
         int startLine = (int)lines_.size();
-        int baseX = padding_ + block.indent;
-        int available = std::max(1, width_ - padding_ * 2 - block.indent);
+        int baseX = item.x + block.indent;
+        int available = std::max(1, item.avail - block.indent);
         int padX = std::max(0, block.paddingX);
         int boxX = baseX;
         int boxW = available;
+        int docCursor = (item.docStart >= 0) ? item.docStart : 0;
 
         if (block.type == RichBlockType::Table)
         {
-            appendTableLines(i, y, maxRight, docCursor);
-            boxX = padding_;
-            boxW = std::max(1, width_ - padding_ * 2);
+            int tableW = (block.maxWidth > 0)
+                       ? std::min(available, std::max(1, block.maxWidth))
+                       : available;
+            int tableX = baseX;
+            if (block.align == RichTextAlign::Center)
+                tableX += (available - tableW) / 2;
+            else if (block.align == RichTextAlign::Right)
+                tableX += available - tableW;
+
+            appendTableLines(block, item.blockId, tableX, tableW,
+                             y, maxRight, docCursor);
+            boxX = tableX;
+            boxW = tableW;
         }
         else
         {
@@ -7523,7 +7865,8 @@ void RichTextView::buildLayout()
                 contentLimit = std::min(contentLimit,
                                         std::max(1, block.maxWidth - padX * 2));
 
-            appendBlockLines(i, y, maxRight, docCursor, contentLimit);
+            appendBlockLines(block, item.blockId, baseX, contentLimit,
+                             y, maxRight, docCursor);
 
             if (lines_.size() > (std::size_t)startLine)
             {
@@ -7563,12 +7906,18 @@ void RichTextView::buildLayout()
 
         if (block.type == RichBlockType::CodeBlock ||
             block.type == RichBlockType::Quote ||
-            block.background.a != 0)
+            block.background.a != 0 ||
+            block.borderWidth > 0)
         {
             BlockRect br;
-            br.block = i;
+            br.block = item.blockId;
             br.rect = { boxX, startY, std::max(1, boxW),
                         std::max(1, endY - startY) };
+            br.background = block.background;
+            br.borderColor = block.borderColor;
+            br.borderWidth = block.borderWidth;
+            br.code = (block.type == RichBlockType::CodeBlock);
+            br.quote = (block.type == RichBlockType::Quote);
             blockRects_.push_back(br);
         }
 
@@ -7590,6 +7939,10 @@ void RichTextView::buildLayout()
             linkRects_.push_back(std::move(link));
         }
     }
+    for (const auto& sr : separatorRects_)
+        maxRight = std::max(maxRight, sr.rect.x + sr.rect.w);
+    for (const auto& ar : actionRects_)
+        maxRight = std::max(maxRight, ar.rect.x + ar.rect.w);
 
     int contentW = std::max(width_, maxRight + padding_);
     int contentH = std::max(height_, y + padding_);
@@ -7612,38 +7965,120 @@ void RichTextView::onRender(SDL_Renderer* renderer)
     //block backgrounds
     for (const auto& br : blockRects_)
     {
-        if (br.block < 0 || br.block >= (int)blocks_.size()) continue;
-        const RichTextBlock& block = blocks_[br.block];
-
         Rect box = br.rect;
         box.x = r.x + box.x - scrollX_;
         box.y = r.y + box.y - scrollY_;
 
-        if (block.type == RichBlockType::CodeBlock)
+        if (br.code)
         {
             SDL_FRect fr = { (float)box.x, (float)box.y,
                              (float)box.w, (float)box.h };
             SDL_SetRenderDrawColor(renderer, codeBackground_.r, codeBackground_.g,
                                    codeBackground_.b, codeBackground_.a);
             SDL_RenderFillRect(renderer, &fr);
-            SDL_SetRenderDrawColor(renderer, codeBorder_.r, codeBorder_.g,
-                                   codeBorder_.b, codeBorder_.a);
-            SDL_RenderRect(renderer, &fr);
         }
-        else if (block.type == RichBlockType::Quote)
+        else if (br.quote)
         {
             SDL_FRect bar = { (float)box.x, (float)box.y, 3.0f, (float)box.h };
             SDL_SetRenderDrawColor(renderer, quoteBarColor_.r, quoteBarColor_.g,
                                    quoteBarColor_.b, quoteBarColor_.a);
             SDL_RenderFillRect(renderer, &bar);
         }
-        else if (block.background.a != 0)
+        else if (br.background.a != 0)
         {
             SDL_FRect fr = { (float)box.x, (float)box.y,
                              (float)box.w, (float)box.h };
-            SDL_SetRenderDrawColor(renderer, block.background.r, block.background.g,
-                                   block.background.b, block.background.a);
+            SDL_SetRenderDrawColor(renderer, br.background.r, br.background.g,
+                                   br.background.b, br.background.a);
             SDL_RenderFillRect(renderer, &fr);
+        }
+    }
+
+    //Borders are drawn after all fills so a card border is not covered by its
+    //children's backgrounds.
+    for (const auto& br : blockRects_)
+    {
+        Rect box = br.rect;
+        box.x = r.x + box.x - scrollX_;
+        box.y = r.y + box.y - scrollY_;
+        SDL_FRect fr = { (float)box.x, (float)box.y,
+                         (float)box.w, (float)box.h };
+
+        if (br.code)
+        {
+            SDL_SetRenderDrawColor(renderer, codeBorder_.r, codeBorder_.g,
+                                   codeBorder_.b, codeBorder_.a);
+            SDL_RenderRect(renderer, &fr);
+        }
+        if (br.borderWidth > 0 && br.borderColor.a != 0)
+        {
+            SDL_SetRenderDrawColor(renderer, br.borderColor.r, br.borderColor.g,
+                                   br.borderColor.b, br.borderColor.a);
+            for (int bw = 0; bw < br.borderWidth; ++bw)
+            {
+                SDL_FRect edge = { (float)box.x + bw, (float)box.y + bw,
+                                   (float)std::max(1, box.w - bw * 2),
+                                   (float)std::max(1, box.h - bw * 2) };
+                SDL_RenderRect(renderer, &edge);
+            }
+        }
+    }
+
+    for (const auto& sr : separatorRects_)
+    {
+        int sx = r.x + sr.rect.x - scrollX_;
+        int sy = r.y + sr.rect.y - scrollY_;
+        if (sy + sr.rect.h < r.y || sy > r.y + r.h) continue;
+        SDL_FRect line = { (float)sx, (float)sy,
+                           (float)sr.rect.w, (float)sr.rect.h };
+        SDL_SetRenderDrawColor(renderer, sr.color.r, sr.color.g,
+                               sr.color.b, sr.color.a);
+        SDL_RenderFillRect(renderer, &line);
+    }
+
+    for (std::size_t ai = 0; ai < actionRects_.size(); ++ai)
+    {
+        const ActionRect& ar = actionRects_[ai];
+        int ax = r.x + ar.rect.x - scrollX_;
+        int ay = r.y + ar.rect.y - scrollY_;
+        if (ay + ar.rect.h < r.y || ay > r.y + r.h) continue;
+
+        Color bg = ar.action.background;
+        Color fg = ar.action.textColor;
+        if (!ar.action.enabled)
+        {
+            bg = actionDisabledBackground_;
+            fg = actionDisabledText_;
+        }
+        else
+        {
+            if (bg.a == 0) bg = actionBackground_;
+            if (fg.a == 0) fg = actionTextColor_;
+            if (pressedAction_ == (int)ai)
+                bg = Color((Uint8)std::min(255, bg.r + 25),
+                           (Uint8)std::min(255, bg.g + 25),
+                           (Uint8)std::min(255, bg.b + 25), bg.a);
+            else if (hoveredAction_ == (int)ai)
+                bg = Color((Uint8)std::min(255, bg.r + 12),
+                           (Uint8)std::min(255, bg.g + 12),
+                           (Uint8)std::min(255, bg.b + 12), bg.a);
+        }
+
+        SDL_FRect box = { (float)ax, (float)ay,
+                          (float)ar.rect.w, (float)ar.rect.h };
+        SDL_SetRenderDrawColor(renderer, bg.r, bg.g, bg.b, bg.a);
+        SDL_RenderFillRect(renderer, &box);
+        SDL_SetRenderDrawColor(renderer, (Uint8)(bg.r * 3 / 4),
+                               (Uint8)(bg.g * 3 / 4), (Uint8)(bg.b * 3 / 4), 255);
+        SDL_RenderRect(renderer, &box);
+
+        detail::ClipGuard actionClip(renderer, ax, ay, ar.rect.w, ar.rect.h);
+        if (!ar.action.text.empty())
+        {
+            int tw = detail::textWidth(ar.action.text.c_str());
+            int tx = ax + (ar.rect.w - tw) / 2;
+            int ty = ay + (ar.rect.h - currentFont()->lineHeight()) / 2;
+            detail::drawText(renderer, ar.action.text.c_str(), tx, ty, fg);
         }
     }
 
@@ -9283,6 +9718,8 @@ void applyTheme(Widget& root, const Theme& theme)
         rt->setCodeBorder(theme.panelBorder);
         rt->setQuoteBarColor(theme.menuAccent);
         rt->setTableColors(theme.panelBg, theme.menuHover, theme.panelBorder);
+        rt->setSeparatorColor(theme.divider);
+        rt->setActionColors(theme.dialogButton, theme.dialogButtonText);
     }
 
     if (auto* sv = dynamic_cast<ScrollView*>(&root))

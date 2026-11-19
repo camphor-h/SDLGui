@@ -881,6 +881,8 @@ rt->onLinkClick = [](const std::string& href) {
 | `setDefaultTextColor` / `setLinkColor` | `void` | Default text / link color |
 | `setCodeBackground` / `setCodeBorder` / `setQuoteBarColor` | `void` | Block styling |
 | `setTableColors(row, header, border)` | `void` | Table cell colors |
+| `setSeparatorColor(Color)` | `void` | Default separator color |
+| `setActionColors(bg, text)` | `void` | Default action-row colors |
 | `setSelectable(bool)` / `selectable()` | `void` / `bool` | Enable/disable selection (default `true`) |
 | `setSelectionColor(Color)` | `void` | Selection highlight color |
 | `selectAll()` / `clearSelection()` | `void` | Select all / clear selection |
@@ -910,6 +912,62 @@ rt->addBlock(msg);
 - `paddingX` adds space inside the block background and reduces the wrapping width.
 - Text wrapping uses the reduced content width, so resizing the view re-flows the block correctly.
 - Tables currently keep their full-width layout.
+
+**Separator**
+
+```cpp
+sdlgui::RichTextBlock line;
+line.type = sdlgui::RichBlockType::Separator;
+line.separatorThickness = 1;
+line.separatorColor = sdlgui::Color(80, 80, 86);
+line.separatorMarginTop = 6;
+line.separatorMarginBottom = 6;
+rt->addBlock(line);
+```
+
+A separator spans the available block width and is laid out in the normal vertical flow. It has no text and does not participate in selection.
+
+**Card**
+
+```cpp
+sdlgui::RichTextBlock card;
+card.isCard = true;
+card.background = sdlgui::Color(30, 32, 40);
+card.borderWidth = 1;
+card.borderColor = sdlgui::Color(70, 72, 82);
+card.paddingX = 12;
+card.paddingY = 10;
+
+card.children.push_back(titleBlock);
+card.children.push_back(codeBlock);
+card.children.push_back(separatorBlock);
+card.children.push_back(resultBlock);
+rt->addBlock(card);
+```
+
+Children are laid out vertically inside one background/border. Nested cards are supported. The card itself contributes no text; its children participate in selection normally.
+
+**Actions**
+
+```cpp
+sdlgui::RichTextAction allow;
+allow.text = "Allow";
+allow.onClick = [] { /* ... */ };
+
+sdlgui::RichTextAction deny;
+deny.text = "Deny";
+deny.enabled = false;
+
+sdlgui::RichTextBlock actions;
+actions.type = sdlgui::RichBlockType::Actions;
+actions.actions = { allow, deny };
+actions.actionsVertical = true;
+actions.actionHeight = 32;
+actions.actionGap = 8;
+rt->addBlock(actions);
+```
+
+Actions are drawn in the content flow, scroll with the view, and are hit-tested by `RichTextView`. They are not part of the selectable text, so copy/selection does not include button labels. They are action rows rather than focusable child widgets; for keyboard-driven flows, use a normal `Button` outside `RichTextView`.
 
 Tables use `RichTable`, `RichTableRow` and `RichTableCell`:
 
@@ -2140,6 +2198,8 @@ rt->onLinkClick = [](const std::string& href) {
 | `setDefaultTextColor` / `setLinkColor` | `void` | 默认文字 / 链接颜色 |
 | `setCodeBackground` / `setCodeBorder` / `setQuoteBarColor` | `void` | 块级样式 |
 | `setTableColors(row, header, border)` | `void` | 表格单元格颜色 |
+| `setSeparatorColor(Color)` | `void` | 分割线默认颜色 |
+| `setActionColors(bg, text)` | `void` | 操作行默认颜色 |
 | `setSelectable(bool)` / `selectable()` | `void` / `bool` | 开关选择功能（默认 `true`） |
 | `setSelectionColor(Color)` | `void` | 选择区颜色 |
 | `selectAll()` / `clearSelection()` | `void` | 全选 / 取消选择 |
@@ -2169,6 +2229,62 @@ rt->addBlock(msg);
 - `paddingX` 增加背景块内部左右留白，同时减少换行可用宽度。
 - 换行使用扣除 padding 后的内容宽度，窗口缩放时会自动重新布局。
 - 表格目前仍使用整行宽度布局。
+
+**Separator（分割线）**
+
+```cpp
+sdlgui::RichTextBlock line;
+line.type = sdlgui::RichBlockType::Separator;
+line.separatorThickness = 1;
+line.separatorColor = sdlgui::Color(80, 80, 86);
+line.separatorMarginTop = 6;
+line.separatorMarginBottom = 6;
+rt->addBlock(line);
+```
+
+分割线横跨当前 block 可用宽度，参与正常纵向排版和滚动；没有文本，不参与选择。
+
+**Card（卡片）**
+
+```cpp
+sdlgui::RichTextBlock card;
+card.isCard = true;
+card.background = sdlgui::Color(30, 32, 40);
+card.borderWidth = 1;
+card.borderColor = sdlgui::Color(70, 72, 82);
+card.paddingX = 12;
+card.paddingY = 10;
+
+card.children.push_back(titleBlock);
+card.children.push_back(codeBlock);
+card.children.push_back(separatorBlock);
+card.children.push_back(resultBlock);
+rt->addBlock(card);
+```
+
+子块在同一个背景和边框内纵向排列，支持嵌套 Card。Card 本身不产生文本；子块按正常规则参与选择。
+
+**Actions（操作区）**
+
+```cpp
+sdlgui::RichTextAction allow;
+allow.text = "允许";
+allow.onClick = [] { /* ... */ };
+
+sdlgui::RichTextAction deny;
+deny.text = "拒绝";
+deny.enabled = false;
+
+sdlgui::RichTextBlock actions;
+actions.type = sdlgui::RichBlockType::Actions;
+actions.actions = { allow, deny };
+actions.actionsVertical = true;
+actions.actionHeight = 32;
+actions.actionGap = 8;
+rt->addBlock(actions);
+```
+
+操作区在内容流中绘制，随视图滚动，并由 `RichTextView` 负责点击命中。按钮文字不进入可选中文本，因此复制/选择不会包含按钮标签。它们是内容流里的操作行，不是可聚焦子控件；需要键盘焦点时请在 `RichTextView` 外使用普通 `Button`。
 
 表格使用 `RichTable`、`RichTableRow` 和 `RichTableCell`：
 
