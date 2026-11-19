@@ -7549,7 +7549,11 @@ void RichTextView::buildLayout()
                 if (dx != 0)
                 {
                     for (std::size_t li = (std::size_t)startLine; li < lines_.size(); ++li)
+                    {
                         lines_[li].x += dx;
+                        for (auto& run : lines_[li].runs)
+                            run.x += dx;
+                    }
                 }
             }
         }
