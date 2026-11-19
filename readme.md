@@ -890,6 +890,27 @@ rt->onLinkClick = [](const std::string& href) {
 
 `RichTextStyle.font` is a `std::shared_ptr<Font>`; `nullptr` uses `currentFont()`. A color with `alpha == 0` means "use the view default". `RichTextStyle.background` draws an inline background, and `underline`/`href` draw an underline.
 
+When the view has focus: `Ctrl+C` / `Cmd+C` copies the selection, `Ctrl+A` / `Cmd+A` selects all, and `Esc` clears it. `setSelectable(false)` disables these shortcuts as well as mouse selection.
+
+Blocks can also be placed horizontally, which is useful for message bubbles:
+
+```cpp
+sdlgui::RichTextBlock msg;
+msg.runs = { yourRun };
+msg.align = sdlgui::RichTextAlign::Right;
+msg.maxWidth = 320;       // total block width limit, including paddingX
+msg.paddingX = 12;        // inner horizontal padding
+msg.background = sdlgui::Color(42, 48, 60);
+rt->addBlock(msg);
+```
+
+- `align` is `Left` / `Center` / `Right`.
+- `maxWidth == 0`: left-aligned blocks fill the available width; centered/right-aligned blocks shrink to their content.
+- `maxWidth > 0`: the block shrinks to its content and is capped at `maxWidth`.
+- `paddingX` adds space inside the block background and reduces the wrapping width.
+- Text wrapping uses the reduced content width, so resizing the view re-flows the block correctly.
+- Tables currently keep their full-width layout.
+
 Tables use `RichTable`, `RichTableRow` and `RichTableCell`:
 
 ```cpp
@@ -2127,6 +2148,27 @@ rt->onLinkClick = [](const std::string& href) {
 | `onLinkClick` | callback | 点击链接时回调 `href` |
 
 `RichTextStyle.font` 是 `std::shared_ptr<Font>`；`nullptr` 使用 `currentFont()`。颜色 alpha 为 0 表示使用视图默认色；`background` 画行内背景，`underline`/`href` 画下划线。
+
+控件有焦点时：`Ctrl+C` / `Cmd+C` 复制选中文本，`Ctrl+A` / `Cmd+A` 全选，`Esc` 清除选区。`setSelectable(false)` 会同时关闭鼠标选择和这些快捷键。
+
+Block 也支持水平布局，适合做消息气泡：
+
+```cpp
+sdlgui::RichTextBlock msg;
+msg.runs = { yourRun };
+msg.align = sdlgui::RichTextAlign::Right;
+msg.maxWidth = 320;       // 总宽度上限，包含 paddingX
+msg.paddingX = 12;        // 背景块左右内边距
+msg.background = sdlgui::Color(42, 48, 60);
+rt->addBlock(msg);
+```
+
+- `align` 支持 `Left` / `Center` / `Right`。
+- `maxWidth == 0`：左对齐时占满可用宽度；居中/右对齐时按内容宽度收缩。
+- `maxWidth > 0`：按内容宽度收缩，并限制在 `maxWidth` 以内。
+- `paddingX` 增加背景块内部左右留白，同时减少换行可用宽度。
+- 换行使用扣除 padding 后的内容宽度，窗口缩放时会自动重新布局。
+- 表格目前仍使用整行宽度布局。
 
 表格使用 `RichTable`、`RichTableRow` 和 `RichTableCell`：
 

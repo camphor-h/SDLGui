@@ -1439,6 +1439,13 @@ enum class RichBlockType
     Table
 };
 
+enum class RichTextAlign
+{
+    Left,
+    Center,
+    Right
+};
+
 struct RichTextStyle
 {
     std::shared_ptr<Font> font;              // null = current/default font
@@ -1483,6 +1490,13 @@ struct RichTextBlock
     bool wrap = true;
     Color background = Color(0, 0, 0, 0);
     int  headingLevel = 1;
+
+    //Horizontal block placement. maxWidth is the total block width cap
+    //(including paddingX); 0 means "fill available width" for left-aligned
+    //blocks and "shrink to content" for centered/right-aligned blocks.
+    RichTextAlign align = RichTextAlign::Left;
+    int  maxWidth = 0;
+    int  paddingX = 0;
 };
 
 class RichTextView : public ScrollView
@@ -1590,7 +1604,8 @@ private:
     Font* runFont(const RichTextStyle& style) const;
     void  ensureLayout();
     void  buildLayout();
-    void  appendBlockLines(int blockIndex, int& y, int& maxRight, int& docCursor);
+    void  appendBlockLines(int blockIndex, int& y, int& maxRight,
+                           int& docCursor, int wrapWidth);
     void  appendWrappedLine(int blockIndex, const std::vector<Glyph>& glyphs,
                             int start, int end, int& y, int& maxRight,
                             bool code);
@@ -6738,27 +6753,6 @@ RichTextView::RichTextView(Widget* parent)
         baseUp(e);
         selecting_ = false;
     };
-
-    onKeyDown = [this](KeyEvent& e)
-    {
-        bool ctrl = (e.mod & SDL_KMOD_CTRL) != 0;
-        if (!selectable_) return;
-
-        if (ctrl && e.key == SDLK_A)
-        {
-            selectAll();
-        }
-        else if (ctrl && e.key == SDLK_C)
-        {
-            std::string text = selectedText();
-            if (!text.empty())
-                SDL_SetClipboardText(text.c_str());
-        }
-        else if (e.key == SDLK_ESCAPE)
-        {
-            clearSelection();
-        }
-    };
 }
 
 Font* RichTextView::runFont(const RichTextStyle& style) const
@@ -7368,11 +7362,10 @@ void RichTextView::appendTableLines(int blockIndex, int& y, int& maxRight,
 }
 
 void RichTextView::appendBlockLines(int blockIndex, int& y, int& maxRight,
-                                    int& docCursor)
+                                    int& docCursor, int wrapWidth)
 {
     const RichTextBlock& block = blocks_[blockIndex];
-    int contentX = padding_ + block.indent;
-    int avail = std::max(1, width_ - padding_ * 2 - block.indent);
+    int avail = std::max(1, wrapWidth);
     bool code = (block.type == RichBlockType::CodeBlock);
 
     std::vector<Glyph> glyphs;
@@ -7456,7 +7449,6 @@ void RichTextView::appendBlockLines(int blockIndex, int& y, int& maxRight,
     }
 
     finishLine();
-    (void)contentX;
 }
 
 void RichTextView::buildLayout()
@@ -7511,10 +7503,57 @@ void RichTextView::buildLayout()
         y += block.marginTop;
 
         int startY = y;
+        int startLine = (int)lines_.size();
+        int baseX = padding_ + block.indent;
+        int available = std::max(1, width_ - padding_ * 2 - block.indent);
+        int padX = std::max(0, block.paddingX);
+        int boxX = baseX;
+        int boxW = available;
+
         if (block.type == RichBlockType::Table)
+        {
             appendTableLines(i, y, maxRight, docCursor);
+            boxX = padding_;
+            boxW = std::max(1, width_ - padding_ * 2);
+        }
         else
-            appendBlockLines(i, y, maxRight, docCursor);
+        {
+            int contentLimit = std::max(1, available - padX * 2);
+            if (block.maxWidth > 0)
+                contentLimit = std::min(contentLimit,
+                                        std::max(1, block.maxWidth - padX * 2));
+
+            appendBlockLines(i, y, maxRight, docCursor, contentLimit);
+
+            if (lines_.size() > (std::size_t)startLine)
+            {
+                int naturalW = 0;
+                for (std::size_t li = (std::size_t)startLine; li < lines_.size(); ++li)
+                    naturalW = std::max(naturalW, lines_[li].width);
+
+                if (block.maxWidth > 0)
+                    boxW = std::min(available,
+                                    std::min(block.maxWidth, naturalW + padX * 2));
+                else if (block.align == RichTextAlign::Left)
+                    boxW = available;
+                else
+                    boxW = std::min(available, naturalW + padX * 2);
+                boxW = std::max(1, boxW);
+
+                if (block.align == RichTextAlign::Center)
+                    boxX += (available - boxW) / 2;
+                else if (block.align == RichTextAlign::Right)
+                    boxX += available - boxW;
+
+                int dx = boxX + padX - baseX;
+                if (dx != 0)
+                {
+                    for (std::size_t li = (std::size_t)startLine; li < lines_.size(); ++li)
+                        lines_[li].x += dx;
+                }
+            }
+        }
+
         int endY = y - lineSpacing_;
         if (endY < startY) endY = startY;
 
@@ -7524,12 +7563,28 @@ void RichTextView::buildLayout()
         {
             BlockRect br;
             br.block = i;
-            br.rect = { padding_, startY, std::max(1, width_ - padding_ * 2),
+            br.rect = { boxX, startY, std::max(1, boxW),
                         std::max(1, endY - startY) };
             blockRects_.push_back(br);
         }
 
         y += block.marginBottom;
+    }
+
+    //Rebuild link rects and content width from the final (shifted) lines.
+    linkRects_.clear();
+    maxRight = width_;
+    for (const auto& line : lines_)
+    {
+        maxRight = std::max(maxRight, line.x + line.width);
+        for (const auto& run : line.runs)
+        {
+            if (run.href.empty()) continue;
+            LinkRect link;
+            link.rect = { run.x, line.y, run.width, line.height };
+            link.href = run.href;
+            linkRects_.push_back(std::move(link));
+        }
     }
 
     int contentW = std::max(width_, maxRight + padding_);
@@ -10799,6 +10854,30 @@ void Application::handleKeyEvent(const SDL_Event& ev)
                     cb->insertText(clip);
                     SDL_free(clip);
                 }
+            }
+        }
+
+        //RichTextView selection/copy shortcuts (Ctrl on Windows/Linux,
+        //Cmd/GUI on macOS).
+        auto* rt = dynamic_cast<RichTextView*>(focus);
+        if (rt && rt->selectable())
+        {
+            SDL_Keycode k = ev.key.key;
+            bool cmd = (ev.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI)) != 0;
+
+            if (cmd && k == SDLK_C)
+            {
+                std::string text = rt->selectedText();
+                if (!text.empty())
+                    SDL_SetClipboardText(text.c_str());
+            }
+            else if (cmd && k == SDLK_A)
+            {
+                rt->selectAll();
+            }
+            else if (k == SDLK_ESCAPE)
+            {
+                rt->clearSelection();
             }
         }
 
