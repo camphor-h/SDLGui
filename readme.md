@@ -829,7 +829,7 @@ tb->keyMap().clear();
 tb->resetKeyBindings();
 ```
 
-Available actions: `CursorLeft/Right/Up/Down/Home/End`, `SelectLeft/Right/Up/Down/Home/End`, `SelectAll`, `Copy`, `Cut`, `Paste`, `Backspace`, `DeleteForward`, `InsertNewline`, `ClearSelection`. TextBox ignores cursor-up/down and newline. Only Shift/Ctrl/Alt/GUI are compared; Caps Lock and Num Lock are ignored. `Tab` is not a text-edit action; when `app.setTabTraversal(true)` is enabled it is consumed by focus traversal.
+Available actions: `CursorLeft/Right/Up/Down/Home/End`, `SelectLeft/Right/Up/Down/Home/End`, `SelectAll`, `Copy`, `Cut`, `Paste`, `Backspace`, `DeleteForward`, `InsertNewline`, `ClearSelection`. TextBox ignores cursor-up/down and newline. Only Shift/Ctrl/Alt/GUI are compared; left/right variants (e.g. `LCTRL` / `RCTRL`) are folded into the generic modifier, and Caps Lock / Num Lock are ignored. `Tab` is not a text-edit action; when `app.setTabTraversal(true)` is enabled it is consumed by focus traversal.
 
 #### RichTextView
 
@@ -2067,7 +2067,7 @@ tb->keyMap().clear();
 tb->resetKeyBindings();
 ```
 
-可用动作：`CursorLeft/Right/Up/Down/Home/End`、`SelectLeft/Right/Up/Down/Home/End`、`SelectAll`、`Copy`、`Cut`、`Paste`、`Backspace`、`DeleteForward`、`InsertNewline`、`ClearSelection`。TextBox 会忽略上下移动和换行动作。只比较 Shift/Ctrl/Alt/GUI 修饰键，Caps Lock/Num Lock 不影响匹配。`Tab` 不是文本编辑动作；开启 `app.setTabTraversal(true)` 时由焦点遍历消费。
+可用动作：`CursorLeft/Right/Up/Down/Home/End`、`SelectLeft/Right/Up/Down/Home/End`、`SelectAll`、`Copy`、`Cut`、`Paste`、`Backspace`、`DeleteForward`、`InsertNewline`、`ClearSelection`。TextBox 会忽略上下移动和换行动作。只比较 Shift/Ctrl/Alt/GUI 修饰键，左/右变体（如 `LCTRL` / `RCTRL`）会折叠为通用修饰键；Caps Lock/Num Lock 不影响匹配。`Tab` 不是文本编辑动作；开启 `app.setTabTraversal(true)` 时由焦点遍历消费。
 
 #### RichTextView（富文本视图）
 

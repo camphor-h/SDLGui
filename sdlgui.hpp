@@ -1931,8 +1931,21 @@ TextKeyMap::TextKeyMap()
 
 uint16_t TextKeyMap::normalize(SDL_Keymod mod)
 {
-    return (uint16_t)(mod & (SDL_KMOD_SHIFT | SDL_KMOD_CTRL |
-                             SDL_KMOD_ALT | SDL_KMOD_GUI));
+    //SDL reports left/right modifier bits separately (LCTRL=0x0040,
+    //RCTRL=0x0080), while bindings normally use the combined SDL_KMOD_CTRL
+    //mask. Fold both sides into the combined bit so matching is not
+    //side-dependent.
+    uint16_t m = (uint16_t)(mod & (SDL_KMOD_LSHIFT | SDL_KMOD_RSHIFT |
+                                   SDL_KMOD_LCTRL  | SDL_KMOD_RCTRL  |
+                                   SDL_KMOD_LALT   | SDL_KMOD_RALT   |
+                                   SDL_KMOD_LGUI   | SDL_KMOD_RGUI));
+
+    if (m & (SDL_KMOD_LSHIFT | SDL_KMOD_RSHIFT)) m |= SDL_KMOD_SHIFT;
+    if (m & (SDL_KMOD_LCTRL  | SDL_KMOD_RCTRL))  m |= SDL_KMOD_CTRL;
+    if (m & (SDL_KMOD_LALT   | SDL_KMOD_RALT))   m |= SDL_KMOD_ALT;
+    if (m & (SDL_KMOD_LGUI   | SDL_KMOD_RGUI))   m |= SDL_KMOD_GUI;
+
+    return m;
 }
 
 void TextKeyMap::clear()
