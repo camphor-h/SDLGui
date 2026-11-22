@@ -16,6 +16,7 @@
 - Retained mode widget tree with automatic clipping
 - Built-in Unifont bitmap font via `fontData.hpp` (supports Unicode BMP)
 - Runtime font switching via `setFont()` / `Font` metrics, with cache and layout invalidation
+- Opt-in content sizing (`setAutoHeight`/`setAutoWidth`) so text controls follow font metric changes
 - `addChild<T>()` template — no manual `make_unique` + `move`
 - Chainable position/size API: `pos()->sz()`
 - Opt-in layout: edge anchors, HBox/VBox linear layout, draggable SplitView
@@ -172,6 +173,8 @@ Widget* ena(bool v);         // calls setEnabled()
 Widget* anch(int flags);     // calls setAnchors()
 Widget* stretch(float w);    // calls setStretch()
 Widget* fillCross(bool on);  // calls setFillCross()
+Widget* autoH(bool on);      // calls setAutoHeight()
+Widget* autoW(bool on);      // calls setAutoWidth()
 ```
 
 | Method | Returns | Description |
@@ -184,7 +187,11 @@ Widget* fillCross(bool on);  // calls setFillCross()
 | `reparent(Widget*)` | `void` | Move this widget under another parent (keeps position/size) |
 | `setFocusable(bool)` | `void` | Include the widget in Tab traversal when enabled |
 | `focusable()` | `bool` | Whether the widget participates in keyboard focus |
+| `setAutoHeight(bool)` / `setAutoWidth(bool)` | `void` | Let the widget derive that dimension from its content |
+| `preferredHeight(width)` / `preferredWidth(height)` | `int` | Content size hint (defaults to the current size) |
 | `requestRedraw()` | `void` | Ask the owning window to draw another frame |
+
+Auto-sizing is opt-in and preserves the fixed-rectangle meaning of `sz()`. `Label`, `Button`, `CheckBox` and `Box` implement `preferredHeight()`/`preferredWidth()`; auto-sized widgets are re-measured when the font changes, so text is not clipped after switching to a taller font.
 
 Disabled widgets reject hit tests (unclickable) and render dimmed. Disabling a parent disables all children.
 
@@ -677,7 +684,7 @@ widget->onContextMenu = [](sdlgui::MouseEvent&, sdlgui::ContextMenu& menu)
 | `dismiss()` | `void` | Hide the menu |
 | `onDismiss` | callback | Fired when menu is dismissed |
 
-The menu automatically dismisses when clicking outside of it. Each widget can have its own `onContextMenu` callback with different items.
+The menu automatically dismisses when clicking outside of it. Each widget can have its own `onContextMenu` callback with different items. Row height follows the current font (`itemHeight()`, at least 22px), so larger fonts stay readable; an open menu is re-fitted when the font changes.
 
 #### MenuBar
 
@@ -1120,12 +1127,20 @@ Switching fonts:
 
 - clears cached text textures;
 - bumps `fontEpoch()`, which invalidates `Label` layout caches;
+- re-measures widgets with `setAutoHeight(true)` / `setAutoWidth(true)` and re-lays out their parents/boxes;
 - refreshes TextBox/TextArea scrolling and marks widgets dirty;
 - requests a redraw.
 
+If a text widget keeps a fixed height chosen for the old font, it will clip on taller fonts. Opt in to content sizing where the height should follow the text:
+
+```cpp
+label->setAutoHeight(true);
+vbox->setAutoHeight(true);  // and children autoH -> the box grows too
+```
+
 `CallbackFont` without measurement callbacks falls back to 8px per character. `setFontRenderer()` is kept as a legacy adapter when the built-in font is not compiled in; prefer `setFont()`.
 
-**Note:** widget sizes are still explicit. A font with a larger `lineHeight()` will render correctly in text widgets, but you may need to increase control heights for a comfortable layout.
+**Note:** a widget's size is still explicit unless you enable `setAutoHeight()` / `setAutoWidth()`. For heights that must follow the font, turn auto-height on; otherwise a taller font can be clipped by the fixed rectangle.
 
 #### fallback Behavior
 
@@ -1351,6 +1366,7 @@ BSD 2-Clause License. See [LICENSE](LICENSE).
 - 保留模式控件树，自动裁剪
 - 通过 `fontData.hpp` 支持内置 Unifont 位图字体（含 Unicode BMP）
 - 通过 `setFont()` / `Font` metrics 支持运行时切换字体，并自动失效缓存和布局
+- 可选的自动内容尺寸（`setAutoHeight` / `setAutoWidth`），让文本控件跟随字体度量变化
 - `addChild<T>()` 模板 — 无需手动 `make_unique` + `move`
 - 可链式调用的位置/大小 API：`pos()->sz()`
 - 内置深色/浅色主题，并提供逐控件颜色 API
@@ -1506,6 +1522,8 @@ Widget* ena(bool v);         // 调用 setEnabled()
 Widget* anch(int flags);     // 调用 setAnchors()
 Widget* stretch(float w);    // 调用 setStretch()
 Widget* fillCross(bool on);  // 调用 setFillCross()
+Widget* autoH(bool on);      // 调用 setAutoHeight()
+Widget* autoW(bool on);      // 调用 setAutoWidth()
 ```
 
 | 方法 | 返回 | 说明 |
@@ -1518,7 +1536,11 @@ Widget* fillCross(bool on);  // 调用 setFillCross()
 | `reparent(Widget*)` | `void` | 把当前控件移动到另一个父节点（保留位置/尺寸） |
 | `setFocusable(bool)` | `void` | 开启 Tab 遍历时加入焦点顺序 |
 | `focusable()` | `bool` | 是否参与键盘焦点 |
+| `setAutoHeight(bool)` / `setAutoWidth(bool)` | `void` | 让该方向尺寸由内容决定 |
+| `preferredHeight(width)` / `preferredWidth(height)` | `int` | 内容尺寸建议值（默认返回当前尺寸） |
 | `requestRedraw()` | `void` | 请求所属窗口再绘制一帧 |
+
+自动尺寸默认关闭，`sz()` 的固定矩形语义保持不变。`Label`、`Button`、`CheckBox` 和 `Box` 实现了 `preferredHeight()` / `preferredWidth()`；字体切换时会重新测量自动尺寸控件，切换到行高更大的字体也不会截断文字。
 
 禁用控件不响应点击（hitTest 失败），渲染时显示灰色。禁用父控件会连带禁用所有子控件。
 
@@ -2010,7 +2032,7 @@ widget->onContextMenu = [](sdlgui::MouseEvent&, sdlgui::ContextMenu& menu)
 | `dismiss()` | `void` | 隐藏菜单 |
 | `onDismiss` | 回调 | 菜单关闭时触发 |
 
-点击菜单外自动关闭。每个控件可有自己的 `onContextMenu` 回调，提供不同的菜单项。
+点击菜单外自动关闭。每个控件可有自己的 `onContextMenu` 回调，提供不同的菜单项。行高跟随当前字体（`itemHeight()`，最小 22px），大字体不会挤在一起；菜单打开期间切换字体会自动重新适配。
 
 #### MenuBar（菜单栏）
 
@@ -2449,12 +2471,20 @@ sdlgui::setFont(font);
 
 - 清空文本纹理缓存；
 - 增加 `fontEpoch()`，使 `Label` 布局缓存失效；
+- 重新测量 `setAutoHeight(true)` / `setAutoWidth(true)` 的控件，并重排其父容器 / Box；
 - 刷新 TextBox/TextArea 的滚动状态并标记控件重绘；
 - 请求窗口重绘。
 
+如果文字控件仍使用按旧字体写死的高度，换成更大的字体后就会被裁剪。需要高度跟随文本时请开启自动尺寸：
+
+```cpp
+label->setAutoHeight(true);
+vbox->setAutoHeight(true);  // 子项 autoH 时 Box 也会随之长高
+```
+
 `CallbackFont` 未提供测量回调时按每字符 8px 兜底。`setFontRenderer()` 仅作为未编译内置字体时的旧接口保留，优先使用 `setFont()`。
 
-**注意：** 控件尺寸仍需显式设置。`lineHeight()` 更大的字体会在文本控件里正确绘制，但可能需要同步增大控件高度。
+**注意：** 控件尺寸默认仍是显式设置的；只有开启 `setAutoHeight()` / `setAutoWidth()` 后才会随内容变化。需要高度跟随字体时请开启自动高度，否则更大的字体可能被固定矩形裁掉。
 
 #### 兜底行为
 
@@ -2659,7 +2689,7 @@ cv->onDraw = [](SDL_Renderer* r, const sdlgui::Rect& a)
 - TextArea 还没有撤销/重做、语法高亮和大文件缓冲优化；Tab 焦点遍历默认关闭
 - 无网格布局、停靠或 CSS 式 flex；布局原语为锚点、HBox/VBox 和 SplitView
 - 无全屏 API，只支持窗口模式
-- 内置字体是固定 16px 位图；运行时 `Font` 可以改变 metrics/绘制，逻辑分辨率会处理 HiDPI 坐标，但控件尺寸仍需显式设置，也没有自动 UI 缩放/字距/连字处理
+- 内置字体是固定 16px 位图；运行时 `Font` 可以改变 metrics/绘制，逻辑分辨率会处理 HiDPI 坐标，控件尺寸默认显式设置（可用 `setAutoHeight`/`setAutoWidth` 跟随内容），没有字距/连字处理
 - `Label` 按字符换行；`TextArea` 使用单词级换行
 - `RichTextView` 还没有行内图片、可折叠 block，以及表格行列合并
 - 旧接口 `setFontRenderer()` 按每字符 8px 测量；需要真实 metrics 请用 `setFont()`

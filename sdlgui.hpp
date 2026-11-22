@@ -393,6 +393,14 @@ public:
     bool      fillCross() const { return fillCross_; }
     void      relayout();
 
+    //content-driven sizing
+    void      setAutoHeight(bool on);
+    bool      autoHeight() const { return autoHeight_; }
+    void      setAutoWidth(bool on);
+    bool      autoWidth() const { return autoWidth_; }
+    virtual int preferredHeight(int width) const { (void)width; return height_; }
+    virtual int preferredWidth(int height) const { (void)height; return width_; }
+
     //chain aliases
     Widget* pos(int x, int y) { setPosition(x, y); return this; }
     Widget* sz(int w, int h)  { setSize(w, h); return this; }
@@ -401,6 +409,8 @@ public:
     Widget* anch(int flags)   { setAnchors(flags); return this; }
     Widget* stretch(float w)  { setStretch(w); return this; }
     Widget* fillCross(bool on = true) { setFillCross(on); return this; }
+    Widget* autoH(bool on = true) { setAutoHeight(on); return this; }
+    Widget* autoW(bool on = true) { setAutoWidth(on); return this; }
 
     //window access
     class Window* getWindow() const { return window_; }
@@ -465,6 +475,8 @@ protected:
     int     anchorL_ = 0, anchorT_ = 0, anchorR_ = 0, anchorB_ = 0;
     float   layoutStretch_ = 0.0f;
     bool    fillCross_ = false;
+    bool    autoWidth_ = false;
+    bool    autoHeight_ = false;
     bool    layingOut_ = false;
 
     Widget* parent_ = nullptr;
@@ -477,6 +489,8 @@ protected:
     virtual void layoutChildren();
     virtual void onFontChanged() { markDirty(); }
     void notifyFontChanged();
+    //Re-apply preferred size for dimensions marked auto. No-op otherwise.
+    void updateAutoSize();
 
     friend class Window;
     friend class Application;
@@ -505,6 +519,9 @@ public:
 
     void setSpacing(int spacing);
     int  spacing() const { return spacing_; }
+
+    int  preferredWidth(int height) const override;
+    int  preferredHeight(int width) const override;
 
 protected:
     void layoutChildren() override;
@@ -690,6 +707,9 @@ public:
     bool     wordWrap()            const { return wordWrap_; }
     RichTextAlign textAlign()      const { return textAlign_; }
 
+    int      preferredHeight(int width) const override;
+    int      preferredWidth(int height) const override;
+
     Widget* txt(const std::string& s) { setText(s); return this; }
     Widget* clr(Color c)              { setTextColor(c); return this; }
 
@@ -723,6 +743,9 @@ public:
     void     setBgColor(Color normal, Color hover, Color pressed);
     void     setBorderColor(Color color);
     const std::string& text() const { return text_; }
+
+    int preferredHeight(int width) const override;
+    int preferredWidth(int height) const override;
 
     Widget* txt(const std::string& s) { setText(s); return this; }
     Widget* clr(Color c)              { setTextColor(c); return this; }
@@ -758,6 +781,9 @@ public:
     void     setBorderColor(Color color);
     bool     isChecked() const { return checked_; }
     const std::string& text() const { return text_; }
+
+    int preferredHeight(int width) const override;
+    int preferredWidth(int height) const override;
 
     Widget* txt(const std::string& s)   { setText(s); return this; }
     Widget* clr(Color c)                { setTextColor(c); return this; }
@@ -961,7 +987,10 @@ public:
     bool hitTest(int absX, int absY) const override;
 
 private:
-    static constexpr int itemH_ = 22;
+    int  itemHeight() const
+    {
+        return std::max(22, currentFont()->lineHeight() + 6);
+    }
     static constexpr int titlePad_ = 12;
 
     struct MenuItem
@@ -1025,7 +1054,17 @@ public:
     void show(int screenX, int screenY);
     void dismiss();
     bool isActive() const { return active_; }
-    int  contentHeight() const { return (int)items_.size() * 22; }
+    int  itemHeight() const
+    {
+        return std::max(22, currentFont()->lineHeight() + 6);
+    }
+    int  contentHeight() const { return (int)items_.size() * itemHeight(); }
+
+    int  preferredHeight(int width) const override
+    {
+        (void)width;
+        return contentHeight();
+    }
 
     void setBackgroundColor(Color color);
     void setTextColor(Color color);
@@ -1041,6 +1080,7 @@ public:
 protected:
     void onRender(SDL_Renderer* renderer) override;
     bool hitTest(int absX, int absY) const override;
+    void onFontChanged() override;
 
 private:
     std::vector<ContextMenuItem> items_;
@@ -2861,6 +2901,11 @@ void Widget::setSize(int w, int h)
 {
     if (w < 0) w = 0;
     if (h < 0) h = 0;
+
+    //Auto dimensions always win over the requested value.
+    if (autoWidth_)  w = preferredWidth(h);
+    if (autoHeight_) h = preferredHeight(w);
+
     if (w == width_ && h == height_) return;
 
     width_  = w;
@@ -2925,6 +2970,30 @@ void Widget::setFillCross(bool on)
     fillCross_ = on;
     if (parent_ && !parent_->layingOut_)
         parent_->relayout();
+}
+
+void Widget::setAutoHeight(bool on)
+{
+    if (autoHeight_ == on) return;
+    autoHeight_ = on;
+    if (on)
+        setSize(width_, preferredHeight(width_));
+}
+
+void Widget::setAutoWidth(bool on)
+{
+    if (autoWidth_ == on) return;
+    autoWidth_ = on;
+    if (on)
+        setSize(preferredWidth(height_), height_);
+}
+
+void Widget::updateAutoSize()
+{
+    if (!autoWidth_ && !autoHeight_) return;
+    int w = autoWidth_ ? preferredWidth(height_) : width_;
+    int h = autoHeight_ ? preferredHeight(w) : height_;
+    setSize(w, h);
 }
 
 void Widget::setBoundsInternal(int x, int y, int w, int h)
@@ -2993,6 +3062,12 @@ void Widget::layoutChildren()
         {
             y = ph - h - child->anchorB_;
         }
+
+        //Content sizing only applies to dimensions not pinned by anchors.
+        if (child->autoHeight_ && !(vFlags & AnchorBottom))
+            h = child->preferredHeight(w);
+        if (child->autoWidth_ && !(hFlags & AnchorRight))
+            w = child->preferredWidth(h);
 
         child->setBoundsInternal(x, y, w, h);
     }
@@ -3096,6 +3171,9 @@ void Widget::notifyFontChanged()
     onFontChanged();
     for (auto& child : children_)
         child->notifyFontChanged();
+
+    //Metrics changed: only widgets that opted into content sizing resize.
+    updateAutoSize();
 }
 
 void Widget::onRender(SDL_Renderer* renderer)
@@ -3174,7 +3252,7 @@ MenuBar::MenuBar(Widget* parent)
             Rect dr = dropdownRect();
             int localY = e.y - (dr.y - absoluteY());
             hoveredItem_ = (localY >= 0 && localY < dr.h)
-                ? localY / itemH_
+                ? localY / itemHeight()
                 : -1;
         }
         else
@@ -3208,7 +3286,7 @@ MenuBar::MenuBar(Widget* parent)
             int sx = ax + e.x, sy = ay + e.y;
             if (sx >= dr.x && sx < dr.x + dr.w && sy >= dr.y && sy < dr.y + dr.h)
             {
-                int idx = (sy - dr.y) / itemH_;
+                int idx = (sy - dr.y) / itemHeight();
                 if (idx >= 0 && idx < (int)menus_[openIdx_].items.size())
                 {
                     auto& item = menus_[openIdx_].items[idx];
@@ -3359,7 +3437,7 @@ int MenuBar::dropdownWidth() const
 
 int MenuBar::dropdownHeight() const
 {
-    return (int)menus_[openIdx_].items.size() * itemH_;
+    return (int)menus_[openIdx_].items.size() * itemHeight();
 }
 
 Rect MenuBar::dropdownRect() const
@@ -3444,15 +3522,18 @@ void MenuBar::renderDropdownOverlay(SDL_Renderer* renderer)
 
     //items
     auto& items = menus_[openIdx_].items;
+    int ih = itemHeight();
+    int lineH = currentFont()->lineHeight();
+    int textOffY = (ih - lineH) / 2;
     for (int i = 0; i < (int)items.size(); i++)
     {
-        int ly = dr.y + i * itemH_;
+        int ly = dr.y + i * ih;
 
         if (items[i].separator)
         {
             SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g, borderColor_.b, borderColor_.a);
-            SDL_RenderLine(renderer, dr.x + 4, ly + itemH_ / 2,
-                               dr.x + dr.w - 4, ly + itemH_ / 2);
+            SDL_RenderLine(renderer, dr.x + 4, ly + ih / 2,
+                               dr.x + dr.w - 4, ly + ih / 2);
             continue;
         }
 
@@ -3461,19 +3542,19 @@ void MenuBar::renderDropdownOverlay(SDL_Renderer* renderer)
         {
             SDL_SetRenderDrawColor(renderer, itemHoverColor_.r, itemHoverColor_.g,
                                    itemHoverColor_.b, itemHoverColor_.a);
-            SDL_FRect hr = { (float)(dr.x + 1), (float)(ly + 1), (float)(dr.w - 2), (float)(itemH_ - 2) };
+            SDL_FRect hr = { (float)(dr.x + 1), (float)(ly + 1), (float)(dr.w - 2), (float)(ih - 2) };
             SDL_RenderFillRect(renderer, &hr);
         }
 
         //text
         Color tc = items[i].enabled ? textColor_ : disabledTextColor_;
-        detail::drawText(renderer, items[i].text.c_str(), dr.x + 6, ly + 3, tc);
+        detail::drawText(renderer, items[i].text.c_str(), dr.x + 6, ly + textOffY, tc);
 
         //shortcut
         if (!items[i].shortcut.empty() && items[i].enabled)
         {
             int sx = dr.x + dr.w - 6 - detail::textWidth(items[i].shortcut.c_str());
-            detail::drawText(renderer, items[i].shortcut.c_str(), sx, ly + 3, shortcutColor_);
+            detail::drawText(renderer, items[i].shortcut.c_str(), sx, ly + textOffY, shortcutColor_);
         }
     }
 }
@@ -3552,7 +3633,9 @@ void Box::layoutChildren()
         }
         else
         {
-            fixed += horiz ? c->width_ : c->height_;
+            fixed += horiz
+                ? (c->autoWidth_ ? c->preferredWidth(contentH) : c->width_)
+                : (c->autoHeight_ ? c->preferredHeight(contentW) : c->height_);
         }
     }
 
@@ -3578,7 +3661,9 @@ void Box::layoutChildren()
         }
         else
         {
-            sizes[i] = horiz ? c->width_ : c->height_;
+            sizes[i] = horiz
+                ? (c->autoWidth_ ? c->preferredWidth(contentH) : c->width_)
+                : (c->autoHeight_ ? c->preferredHeight(contentW) : c->height_);
         }
     }
 
@@ -3586,8 +3671,13 @@ void Box::layoutChildren()
     for (int i = 0; i < n; ++i)
     {
         Widget* c = items[i];
-        int childCross = c->fillCross_ ? crossSize
-                                       : (horiz ? c->height_ : c->width_);
+        int childCross;
+        if (c->fillCross_)
+            childCross = crossSize;
+        else if (horiz)
+            childCross = c->autoHeight_ ? c->preferredHeight(sizes[i]) : c->height_;
+        else
+            childCross = c->autoWidth_ ? c->preferredWidth(sizes[i]) : c->width_;
 
         if (horiz)
             c->setBoundsInternal(mainPos, padding_, sizes[i], childCross);
@@ -3596,6 +3686,46 @@ void Box::layoutChildren()
 
         mainPos += sizes[i] + spacing_;
     }
+}
+
+int Box::preferredWidth(int) const
+{
+    bool horiz = (orientation_ == Orientation::Horizontal);
+    int sum = 0, widest = 0, n = 0;
+    for (auto& child : children_)
+    {
+        if (!child->visible()) continue;
+        int cw = child->autoWidth_ ? child->preferredWidth(child->height_)
+                                   : child->width_;
+        sum += cw;
+        widest = std::max(widest, cw);
+        ++n;
+    }
+    int main = horiz ? sum : widest;
+    if (horiz && n > 1)
+        main += spacing_ * (n - 1);
+    return main + padding_ * 2;
+}
+
+int Box::preferredHeight(int) const
+{
+    bool horiz = (orientation_ == Orientation::Horizontal);
+    int sum = 0, tallest = 0, n = 0;
+    for (auto& child : children_)
+    {
+        if (!child->visible()) continue;
+        int cw = child->autoWidth_ ? child->preferredWidth(child->height_)
+                                   : child->width_;
+        int ch = child->autoHeight_ ? child->preferredHeight(cw)
+                                    : child->height_;
+        sum += ch;
+        tallest = std::max(tallest, ch);
+        ++n;
+    }
+    int main = horiz ? tallest : sum;
+    if (!horiz && n > 1)
+        main += spacing_ * (n - 1);
+    return main + padding_ * 2;
 }
 
 //==============================================================================
@@ -4046,6 +4176,7 @@ void Label::setText(const std::string& text)
     text_ = text;
     layoutWidth_ = -1;
     markDirty();
+    updateAutoSize();
 }
 
 void Label::setTextColor(Color color)
@@ -4060,6 +4191,26 @@ void Label::setWordWrap(bool wrap)
     layoutWidth_ = -1;
     layoutFontEpoch_ = 0;
     markDirty();
+    updateAutoSize();
+}
+
+int Label::preferredHeight(int width) const
+{
+    int wrapW = (wordWrap_ && width > 0) ? width : 0x7fffffff;
+    std::vector<std::string> lines;
+    detail::wrapText(text_.c_str(), wrapW, lines);
+    int lineH = currentFont()->lineHeight();
+    return std::max(1, (int)lines.size() * lineH);
+}
+
+int Label::preferredWidth(int) const
+{
+    std::vector<std::string> lines;
+    detail::wrapText(text_.c_str(), 0x7fffffff, lines);
+    int widest = 0;
+    for (auto& line : lines)
+        widest = std::max(widest, detail::textWidth(line.c_str()));
+    return widest;
 }
 
 void Label::setTextAlign(RichTextAlign align)
@@ -4137,6 +4288,17 @@ void Button::setText(const std::string& text)
 {
     text_ = text;
     markDirty();
+    updateAutoSize();
+}
+
+int Button::preferredHeight(int) const
+{
+    return std::max(24, currentFont()->lineHeight() + 12);
+}
+
+int Button::preferredWidth(int) const
+{
+    return detail::textWidth(text_.c_str()) + 24;
 }
 
 void Button::setTextColor(Color color)
@@ -4220,6 +4382,17 @@ void CheckBox::setText(const std::string& text)
 {
     text_ = text;
     markDirty();
+    updateAutoSize();
+}
+
+int CheckBox::preferredHeight(int) const
+{
+    return std::max(16, currentFont()->lineHeight() + 6);
+}
+
+int CheckBox::preferredWidth(int) const
+{
+    return 22 + detail::textWidth(text_.c_str()) + 6;
 }
 
 void CheckBox::setChecked(bool checked)
@@ -5083,7 +5256,7 @@ ContextMenu::ContextMenu(Widget* parent)
     onMouseMove = [this](MouseEvent& e)
     {
         int old = hoveredIdx_;
-        hoveredIdx_ = e.y / 22;
+        hoveredIdx_ = e.y / itemHeight();
         if (hoveredIdx_ < 0 || hoveredIdx_ >= (int)items_.size())
             hoveredIdx_ = -1;
         if (old != hoveredIdx_) markDirty();
@@ -5103,6 +5276,7 @@ void ContextMenu::addItem(const std::string& text, std::function<void()> onClick
     int w = detail::textWidth(text.c_str()) + 16;
     if (w > width_) width_ = w;
     markDirty();
+    updateAutoSize();
 }
 
 void ContextMenu::addSeparator()
@@ -5133,7 +5307,20 @@ void ContextMenu::show(int screenX, int screenY)
     screenY_ = screenY;
     active_ = true;
     setPosition(screenX, screenY);
-    setSize(width_, (int)items_.size() * 22);
+    setSize(width_, contentHeight());
+    markDirty();
+}
+
+void ContextMenu::onFontChanged()
+{
+    //Item metrics depend on the font, so re-fit an active menu.
+    int w = 160;
+    for (auto& item : items_)
+        if (!item.separator)
+            w = std::max(w, detail::textWidth(item.text.c_str()) + 16);
+    width_ = w;
+    if (active_)
+        setSize(width_, contentHeight());
     markDirty();
 }
 
@@ -5161,15 +5348,19 @@ void ContextMenu::onRender(SDL_Renderer* renderer)
     SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g, borderColor_.b, borderColor_.a);
     SDL_RenderRect(renderer, &fc);
 
+    int ih = itemHeight();
+    int lineH = currentFont()->lineHeight();
+
     for (int i = 0; i < (int)items_.size(); i++)
     {
-        int iy = r.y + i * 22;
+        int iy = r.y + i * ih;
 
         if (items_[i].separator)
         {
             SDL_SetRenderDrawColor(renderer, separatorColor_.r, separatorColor_.g,
                                    separatorColor_.b, separatorColor_.a);
-            SDL_RenderLine(renderer, r.x + 4, iy + 11, r.x + r.w - 4, iy + 11);
+            SDL_RenderLine(renderer, r.x + 4, iy + ih / 2,
+                           r.x + r.w - 4, iy + ih / 2);
             continue;
         }
 
@@ -5177,12 +5368,13 @@ void ContextMenu::onRender(SDL_Renderer* renderer)
         {
             SDL_SetRenderDrawColor(renderer, hoverColor_.r, hoverColor_.g,
                                    hoverColor_.b, hoverColor_.a);
-            SDL_FRect sel = { (float)r.x, (float)iy, (float)r.w, 22.0f };
+            SDL_FRect sel = { (float)r.x, (float)iy, (float)r.w, (float)ih };
             SDL_RenderFillRect(renderer, &sel);
         }
 
         Color tc = items_[i].enabled ? textColor_ : disabledTextColor_;
-        detail::drawText(renderer, items_[i].text.c_str(), r.x + 8, iy + 3, tc);
+        detail::drawText(renderer, items_[i].text.c_str(), r.x + 8,
+                         iy + (ih - lineH) / 2, tc);
     }
 
     dirty_ = false;
@@ -9740,6 +9932,11 @@ void Application::refreshFont()
         if (!win->root_) continue;
         win->root_->notifyFontChanged();
         win->root_->relayout();
+
+        //Overlays that are not part of the widget tree still need new metrics.
+        if (win->contextMenu_)
+            win->contextMenu_->notifyFontChanged();
+
         win->requestRedraw();
         if (win->focused_)
             updateTextInputArea(win->focused_);
@@ -11020,7 +11217,8 @@ void Application::handleMouseEvent(const SDL_Event& ev)
             if (win->contextMenu_->hitTest(mx, my))
             {
                 //item click
-                int idx = (my - win->contextMenu_->absoluteY()) / 22;
+                int idx = (my - win->contextMenu_->absoluteY()) /
+                          win->contextMenu_->itemHeight();
                 if (idx >= 0 && idx < (int)win->contextMenu_->items_.size())
                 {
                     auto& item = win->contextMenu_->items_[idx];
