@@ -274,7 +274,7 @@ drawer->open();    // or close() / toggle()
 drawer->onOpenChanged = [](bool open) { /* ... */ };
 ```
 
-Clicks on the scrim close the drawer without activating the widget underneath. The panel content is a normal widget tree (`drawer->panel()`). `drawer->setCloseButtonVisible(true)` adds a built-in close button at the panel's top-right.
+Clicks on the scrim close the drawer without activating the widget underneath. The panel content is a normal widget tree (`drawer->panel()`). `drawer->setCloseButtonVisible(true)` adds a built-in close button at the panel's top-right. `setScrimColor()` and `setPanelColor()` alpha values are honored (the scrim is blended over the content behind the drawer).
 
 #### Label
 
@@ -1608,7 +1608,7 @@ drawer->open();    // 或 close() / toggle()
 drawer->onOpenChanged = [](bool open) { /* ... */ };
 ```
 
-点击遮罩会关闭抽屉，不会误触下面的控件。面板内容是普通控件树（`drawer->panel()`）。调用 `drawer->setCloseButtonVisible(true)` 会在面板右上角显示内置关闭按钮。
+点击遮罩会关闭抽屉，不会误触下面的控件。面板内容是普通控件树（`drawer->panel()`）。调用 `drawer->setCloseButtonVisible(true)` 会在面板右上角显示内置关闭按钮。`setScrimColor()` / `setPanelColor()` 的 alpha 会生效（遮罩会与背后内容混合）。
 
 #### Label（文本标签）
 

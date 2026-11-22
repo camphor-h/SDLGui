@@ -3887,6 +3887,13 @@ void Drawer::onRender(SDL_Renderer* renderer)
     Rect r = absoluteRect();
     detail::ClipGuard clip(renderer, r.x, r.y, r.w, r.h);
 
+    //The scrim and the panel background may be translucent, so blend them.
+    //Save/restore the previous mode: the default is SDL_BLENDMODE_NONE and
+    //other widgets rely on that for opaque fills.
+    SDL_BlendMode prevBlend = SDL_BLENDMODE_NONE;
+    SDL_GetRenderDrawBlendMode(renderer, &prevBlend);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
     SDL_SetRenderDrawColor(renderer, scrimColor_.r, scrimColor_.g,
                            scrimColor_.b, scrimColor_.a);
     SDL_FRect scrim = { (float)r.x, (float)r.y, (float)r.w, (float)r.h };
@@ -3898,6 +3905,8 @@ void Drawer::onRender(SDL_Renderer* renderer)
     SDL_SetRenderDrawColor(renderer, panelColor_.r, panelColor_.g,
                            panelColor_.b, panelColor_.a);
     SDL_RenderFillRect(renderer, &panelBg);
+
+    SDL_SetRenderDrawBlendMode(renderer, prevBlend);
 
     panel_->onRender(renderer);
 
