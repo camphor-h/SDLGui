@@ -180,6 +180,8 @@ Widget* fillCross(bool on);  // calls setFillCross()
 | `enabled()` | `bool` | Check if widget is enabled |
 | `ena(bool)` | `Widget*` | Chainable setEnabled |
 | `removeChild(Widget*)` | `void` | Remove and destroy a direct child |
+| `detachChild(Widget*)` | `unique_ptr<Widget>` | Remove a direct child without destroying it |
+| `reparent(Widget*)` | `void` | Move this widget under another parent (keeps position/size) |
 | `setFocusable(bool)` | `void` | Include the widget in Tab traversal when enabled |
 | `focusable()` | `bool` | Whether the widget participates in keyboard focus |
 | `requestRedraw()` | `void` | Ask the owning window to draw another frame |
@@ -252,7 +254,7 @@ auto* sidebar = split->addChild<sdlgui::VBox>(); // first visible child
 auto* editor  = split->addChild<sdlgui::VBox>(); // second visible child
 ```
 
-`SideBySide` splits left/right; `Stacked` splits top/bottom. Drag the divider to resize; `setMinPaneSize()` limits both panes.
+`SideBySide` splits left/right; `Stacked` splits top/bottom. Drag the divider to resize; `setMinPaneSize()` limits both panes. `setDividerHitWidth(px)` separates the visual divider width from the drag hit area (`0` = `max(dividerWidth, 6)`).
 
 **Drawer**
 
@@ -272,7 +274,7 @@ drawer->open();    // or close() / toggle()
 drawer->onOpenChanged = [](bool open) { /* ... */ };
 ```
 
-Clicks on the scrim close the drawer without activating the widget underneath. The panel content is a normal widget tree (`drawer->panel()`).
+Clicks on the scrim close the drawer without activating the widget underneath. The panel content is a normal widget tree (`drawer->panel()`). `drawer->setCloseButtonVisible(true)` adds a built-in close button at the panel's top-right.
 
 #### Label
 
@@ -289,6 +291,7 @@ label->setTextColor(sdlgui::Color::Green);
 |--------|---------|-------------|
 | `setText(string)` | `void` | Set text content |
 | `setTextColor(Color)` | `void` | Set text color |
+| `setTextAlign(RichTextAlign)` | `void` | Left / Center / Right per line |
 | `txt(string)` | `Widget*` | Chainable setText |
 | `clr(Color)` | `Widget*` | Chainable setTextColor |
 
@@ -363,6 +366,8 @@ pw->setPlaceholder("password");
 | `setSelectionColor(Color)` | `void` | Set selection highlight color |
 | `setPlaceholder(string)` | `void` | Placeholder shown while the text is empty |
 | `setPlaceholderColor(Color)` | `void` | Set placeholder color |
+| `setContentInsets(l,t,r,b)` | `void` | Text/caret/selection inner insets |
+| `setBorderVisible(bool)` / `setBackgroundVisible(bool)` | `void` | Toggle border/background painting |
 | `setMaxLength(int)` | `void` | Limit to N Unicode codepoints; `0` = unlimited |
 | `setPassword(bool)` | `void` | Mask the displayed text |
 | `setPasswordChar(char)` | `void` | Set mask character (default `*`) |
@@ -533,6 +538,7 @@ app.run();  // Blocks until quit
 | `focused()` | `Widget*` | Get the currently focused widget |
 | `valid()` | `bool` | Whether `SDL_Init` succeeded |
 | `setFPS(fps)` | `void` | Set target FPS (0 = unlimited, default 60) |
+| `setUiScale(scale)` | `void` | Logical UI zoom; notifies the current font via `Font::setRasterScale` |
 | `fps()` | `int` | Get current target FPS |
 | `setTouchMode(bool)` | `void` | Force mobile/touch behavior |
 | `setTouchTargetPadding(px)` | `void` | Extra hit-test padding in touch mode |
@@ -576,6 +582,7 @@ lb->onItemSelected = [](int index) { /* ... */ };
 | `selectedIndex()` | `int` | Get selected index (-1 if none) |
 | `selectedItem()` | `string&` | Get selected item text |
 | `onItemSelected` | callback | Fired when an item is clicked |
+| `onItemActivated` | callback | Fired on double-click or Enter (`void(int)`) |
 
 #### Slider
 
@@ -776,6 +783,8 @@ ta->setText("Line 1\nLine 2\nLine 3");
 | `setLineSpacing(int)` | `void` | Extra pixels between lines (0 = font default) |
 | `setLetterSpacing(int)` | `void` | Extra pixels between characters (0 = font default) |
 | `setWordWrap(bool)` | `void` | Enable/disable automatic wrapping (default `true`) |
+| `setContentInsets(l,t,r,b)` | `void` | Text/caret/selection inner insets |
+| `setBorderVisible(bool)` / `setBackgroundVisible(bool)` | `void` | Toggle border/background painting |
 | `wordWrap()` | `bool` | Whether wrapping is enabled |
 | `setShowLineNumbers(bool)` | `void` | Show a line-number gutter |
 | `setAutoIndent(bool)` | `void` | Enter copies the current line's indentation; adds a level after `{`, `[` or `(` |
@@ -889,6 +898,7 @@ rt->onLinkClick = [](const std::string& href) {
 | `selectedText()` | `string` | Selected text, including block newlines |
 | `relayout()` | `void` | Force re-layout |
 | `onLinkClick` | callback | Fired with the run's `href` |
+| `onEmptyState` | callback | Drawn when `blocks()` is empty |
 
 `RichTextStyle.font` is a `std::shared_ptr<Font>`; `nullptr` uses `currentFont()`. A color with `alpha == 0` means "use the view default". `RichTextStyle.background` draws an inline background, and `underline`/`href` draw an underline.
 
@@ -1084,8 +1094,12 @@ public:
     virtual int  advance(uint32_t codepoint) const = 0;
     virtual void draw(SDL_Renderer*, const char* text,
                       int x, int y, Color color) = 0;
+    //Optional: re-rasterize glyphs for Application::uiScale().
+    virtual void setRasterScale(float scale) {}
 };
 ```
+
+For custom TTF/canvas fonts, override `setRasterScale(scale)` to rasterize glyphs at `fontSize * scale`, keep metrics in logical units, and draw back at logical size. `Application::setUiScale()` and `setFont()` call it automatically.
 
 A quick adapter is available without subclassing:
 
@@ -1500,6 +1514,8 @@ Widget* fillCross(bool on);  // 调用 setFillCross()
 | `enabled()` | `bool` | 检查控件是否启用 |
 | `ena(bool)` | `Widget*` | 链式 setEnabled |
 | `removeChild(Widget*)` | `void` | 移除并销毁直接子控件 |
+| `detachChild(Widget*)` | `unique_ptr<Widget>` | 移除直接子控件但不销毁 |
+| `reparent(Widget*)` | `void` | 把当前控件移动到另一个父节点（保留位置/尺寸） |
 | `setFocusable(bool)` | `void` | 开启 Tab 遍历时加入焦点顺序 |
 | `focusable()` | `bool` | 是否参与键盘焦点 |
 | `requestRedraw()` | `void` | 请求所属窗口再绘制一帧 |
@@ -1572,7 +1588,7 @@ auto* sidebar = split->addChild<sdlgui::VBox>(); // 第一个可见子控件
 auto* editor  = split->addChild<sdlgui::VBox>(); // 第二个可见子控件
 ```
 
-`SideBySide` 左右分栏，`Stacked` 上下分栏。拖动分隔条调整比例；`setMinPaneSize()` 限制两侧最小尺寸。
+`SideBySide` 左右分栏，`Stacked` 上下分栏。拖动分隔条调整比例；`setMinPaneSize()` 限制两侧最小尺寸。`setDividerHitWidth(px)` 可将视觉宽度与拖动命中宽度分开（`0` = `max(dividerWidth, 6)`）。
 
 **Drawer（抽屉）**
 
@@ -1592,7 +1608,7 @@ drawer->open();    // 或 close() / toggle()
 drawer->onOpenChanged = [](bool open) { /* ... */ };
 ```
 
-点击遮罩会关闭抽屉，不会误触下面的控件。面板内容是普通控件树（`drawer->panel()`）。
+点击遮罩会关闭抽屉，不会误触下面的控件。面板内容是普通控件树（`drawer->panel()`）。调用 `drawer->setCloseButtonVisible(true)` 会在面板右上角显示内置关闭按钮。
 
 #### Label（文本标签）
 
@@ -1609,6 +1625,7 @@ label->setTextColor(sdlgui::Color::Green);
 |------|------|------|
 | `setText(string)` | `void` | 设置文本内容 |
 | `setTextColor(Color)` | `void` | 设置文本颜色 |
+| `setTextAlign(RichTextAlign)` | `void` | 按行左/中/右对齐 |
 | `txt(string)` | `Widget*` | 链式 setText |
 | `clr(Color)` | `Widget*` | 链式 setTextColor |
 
@@ -1683,6 +1700,8 @@ pw->setPlaceholder("密码");
 | `setSelectionColor(Color)` | `void` | 设置选择区背景色 |
 | `setPlaceholder(string)` | `void` | 文本为空时显示的占位符 |
 | `setPlaceholderColor(Color)` | `void` | 设置占位符颜色 |
+| `setContentInsets(l,t,r,b)` | `void` | 文本/光标/选区的内边距 |
+| `setBorderVisible(bool)` / `setBackgroundVisible(bool)` | `void` | 开关边框/背景绘制 |
 | `setMaxLength(int)` | `void` | 限制 N 个 Unicode 码点；`0` 表示不限制 |
 | `setPassword(bool)` | `void` | 以掩码显示文本 |
 | `setPasswordChar(char)` | `void` | 设置掩码字符（默认 `*`） |
@@ -1853,6 +1872,7 @@ app.run();  // 阻塞至退出
 | `focused()` | `Widget*` | 获取当前焦点控件 |
 | `valid()` | `bool` | `SDL_Init` 是否成功 |
 | `setFPS(fps)` | `void` | 设置目标帧率（0 = 不限，默认 60） |
+| `setUiScale(scale)` | `void` | 逻辑 UI 缩放；通过 `Font::setRasterScale` 通知当前字体重新光栅化 |
 | `fps()` | `int` | 获取当前目标帧率 |
 | `setTouchMode(bool)` | `void` | 强制启用移动/触摸行为 |
 | `setTouchTargetPadding(px)` | `void` | 触摸模式下扩大命中区域 |
@@ -1896,6 +1916,7 @@ lb->onItemSelected = [](int index) { /* ... */ };
 | `selectedIndex()` | `int` | 获取选中索引（-1 表示无） |
 | `selectedItem()` | `string&` | 获取选中条目的文本 |
 | `onItemSelected` | 回调 | 点击条目时触发 |
+| `onItemActivated` | 回调 | 双击或回车时触发 `void(int)` |
 
 #### Slider（滑块）
 
@@ -2095,6 +2116,8 @@ ta->setText("第一行\n第二行\n第三行");
 | `setLineSpacing(int)` | `void` | 行间额外像素（0 = 字体默认行高） |
 | `setLetterSpacing(int)` | `void` | 字符间额外像素（0 = 字体默认字距） |
 | `setWordWrap(bool)` | `void` | 开启/关闭自动换行（默认 `true`） |
+| `setContentInsets(l,t,r,b)` | `void` | 文本/光标/选区的内边距 |
+| `setBorderVisible(bool)` / `setBackgroundVisible(bool)` | `void` | 开关边框/背景绘制 |
 | `wordWrap()` | `bool` | 当前是否自动换行 |
 | `setShowLineNumbers(bool)` | `void` | 显示行号栏 |
 | `setAutoIndent(bool)` | `void` | 换行时沿用当前行缩进；行尾为 `{`、`[`、`(` 时增加一级 |
@@ -2208,6 +2231,7 @@ rt->onLinkClick = [](const std::string& href) {
 | `selectedText()` | `string` | 选中文本（包含 block 间换行） |
 | `relayout()` | `void` | 强制重新布局 |
 | `onLinkClick` | callback | 点击链接时回调 `href` |
+| `onEmptyState` | callback | `blocks()` 为空时绘制空状态 |
 
 `RichTextStyle.font` 是 `std::shared_ptr<Font>`；`nullptr` 使用 `currentFont()`。颜色 alpha 为 0 表示使用视图默认色；`background` 画行内背景，`underline`/`href` 画下划线。
 
@@ -2399,8 +2423,12 @@ public:
     virtual int  advance(uint32_t codepoint) const = 0;
     virtual void draw(SDL_Renderer*, const char* text,
                       int x, int y, Color color) = 0;
+    //可选：根据 Application::uiScale() 重新光栅化字形。
+    virtual void setRasterScale(float scale) {}
 };
 ```
+
+自定义 TTF/Canvas 字体应重写 `setRasterScale(scale)`：按 `fontSize * scale` 光栅化，但 metrics 和绘制坐标仍使用逻辑尺寸。`Application::setUiScale()` 和 `setFont()` 会自动调用。
 
 不想继承时可以用回调适配器：
 

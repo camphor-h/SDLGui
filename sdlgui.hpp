@@ -183,6 +183,13 @@ enum AnchorFlag : uint8_t
     AnchorBottom = 1 << 3
 };
 
+enum class RichTextAlign
+{
+    Left,
+    Center,
+    Right
+};
+
 //==============================================================================
 // Pointer / MouseEvent
 //==============================================================================
@@ -268,6 +275,11 @@ public:
     virtual int measureTo(const char* text, int bytePos) const = 0;
     virtual int advance(uint32_t codepoint) const = 0;
 
+    //Optional: called when Application::setUiScale() changes. Custom font
+    //renderers should rasterize glyphs at size*scale and still report logical
+    //metrics/draw in logical coordinates.
+    virtual void setRasterScale(float scale) { (void)scale; }
+
     virtual void draw(SDL_Renderer* renderer, const char* text,
                       int x, int y, Color color) = 0;
 };
@@ -343,6 +355,8 @@ public:
     //tree
     void      addChild(std::unique_ptr<Widget> child);
     void      removeChild(Widget* child);
+    std::unique_ptr<Widget> detachChild(Widget* child);
+    void      reparent(Widget* newParent);
 
     template<typename T, typename... Args>
     T* addChild(Args&&... args)
@@ -536,6 +550,8 @@ public:
 
     void setDividerWidth(int px);
     int  dividerWidth() const { return dividerW_; }
+    void setDividerHitWidth(int px); //0 = max(dividerWidth, 6)
+    int  dividerHitWidth() const { return dividerHitW_; }
 
     void setDividerColor(Color color);
     Color dividerColor() const { return dividerColor_; }
@@ -552,6 +568,7 @@ private:
     float ratio_ = 0.5f;
     int   minPane_ = 40;
     int   dividerW_ = 6;
+    int   dividerHitW_ = 0;
     Color dividerColor_ = Color(70, 70, 75);
     bool  dragging_ = false;
 };
@@ -580,6 +597,8 @@ public:
 
     void setScrimColor(Color color);
     void setPanelColor(Color color);
+    void setCloseButtonVisible(bool visible);
+    bool closeButtonVisible() const { return closeButtonVisible_; }
 
     Widget* panel() const { return panel_; }
 
@@ -594,7 +613,9 @@ protected:
 
 private:
     Widget* panel_ = nullptr;
+    Widget* closeButton_ = nullptr;
     bool    open_ = false;
+    bool    closeButtonVisible_ = false;
     Side    side_ = Side::Left;
     int     panelWidth_ = 280;
     Color   scrimColor_ = Color(0, 0, 0, 150);
@@ -663,9 +684,11 @@ public:
     void     setText(const std::string& text);
     void     setTextColor(Color color);
     void     setWordWrap(bool wrap);
+    void     setTextAlign(RichTextAlign align);
     const std::string& text()      const { return text_; }
     Color    textColor()           const { return textColor_; }
     bool     wordWrap()            const { return wordWrap_; }
+    RichTextAlign textAlign()      const { return textAlign_; }
 
     Widget* txt(const std::string& s) { setText(s); return this; }
     Widget* clr(Color c)              { setTextColor(c); return this; }
@@ -678,6 +701,7 @@ private:
     std::string text_;
     Color       textColor_ = Color::White;
     bool        wordWrap_  = false;
+    RichTextAlign textAlign_ = RichTextAlign::Left;
     std::vector<std::string> layout_;
     int         layoutWidth_ = -1;
     bool        layoutWrap_  = false;
@@ -775,6 +799,13 @@ public:
     void     setComposition(const std::string& text);
     void     clearComposition();
     const std::string& composition() const { return composition_; }
+
+    void setContentInsets(int left, int top, int right, int bottom);
+    void setBorderVisible(bool visible);
+    void setBackgroundVisible(bool visible);
+    bool borderVisible() const { return borderVisible_; }
+    bool backgroundVisible() const { return backgroundVisible_; }
+
     bool     scrollByPixels(int dx);
     void     adjustScroll();
 
@@ -837,6 +868,9 @@ private:
     bool        mouseSelecting_ = false;
     uint32_t    focusTick_  = 0;
     int         scrollOffX_ = 0;
+    int         insetL_ = 4, insetT_ = 0, insetR_ = 4, insetB_ = 0;
+    bool        borderVisible_ = true;
+    bool        backgroundVisible_ = true;
     std::string composition_;
     TextKeyMap  keyMap_;
 };
@@ -864,6 +898,7 @@ public:
     void setBorderColor(Color color);
 
     std::function<void(int)> onItemSelected;
+    std::function<void(int)> onItemActivated;
 
     Widget* txt(const std::string& s) { addItem(s); return this; }
 
@@ -1300,6 +1335,11 @@ public:
     void     setLetterSpacing(int px); //extra pixels between characters
     void     setWordWrap(bool wrap);
     bool     wordWrap() const { return wordWrap_; }
+    void     setContentInsets(int left, int top, int right, int bottom);
+    void     setBorderVisible(bool visible);
+    void     setBackgroundVisible(bool visible);
+    bool     borderVisible() const { return borderVisible_; }
+    bool     backgroundVisible() const { return backgroundVisible_; }
     void     setShowLineNumbers(bool on) { showLineNumbers_ = on; refreshLayout(); markDirty(); }
     void     setAutoIndent(bool on) { autoIndent_ = on; }
     void     setSmartBackspace(bool on) { smartBackspace_ = on; }
@@ -1384,8 +1424,14 @@ private:
     bool        mouseSelecting_ = false;
     bool        cursorVisible_ = false;
     uint32_t    cursorTick_ = 0;
+    int         insetL_ = 0, insetT_ = 0, insetR_ = 0, insetB_ = 0;
+    bool        borderVisible_ = true;
+    bool        backgroundVisible_ = true;
     std::string composition_;
     TextKeyMap  keyMap_;
+
+    int contentWidth() const { return std::max(1, width_ - insetL_ - insetR_); }
+    int contentHeight() const { return std::max(1, height_ - insetT_ - insetB_); }
 
     std::vector<std::string> splitLines() const;
     std::size_t offsetAt(int line, int col) const;
@@ -1439,13 +1485,6 @@ enum class RichBlockType
     Table,
     Separator,
     Actions
-};
-
-enum class RichTextAlign
-{
-    Left,
-    Center,
-    Right
 };
 
 struct RichTextStyle
@@ -1573,6 +1612,7 @@ public:
     void relayout();
 
     std::function<void(const std::string&)> onLinkClick;
+    std::function<void(SDL_Renderer*, const Rect&)> onEmptyState;
 
 protected:
     void onRender(SDL_Renderer* renderer) override;
@@ -2753,6 +2793,14 @@ uint64_t fontEpoch()
 void setFont(std::shared_ptr<Font> font)
 {
     detail::activeFont_ = std::move(font);
+
+    if (detail::activeFont_)
+    {
+        float scale = Application::instance()
+                    ? Application::instance()->uiScale() : 1.0f;
+        detail::activeFont_->setRasterScale(scale);
+    }
+
     ++detail::fontEpoch_;
     detail::clearAllTextCaches();
 
@@ -2989,6 +3037,36 @@ void Widget::removeChild(Widget* child)
         relayout();
         markDirty();
     }
+}
+
+std::unique_ptr<Widget> Widget::detachChild(Widget* child)
+{
+    auto it = std::find_if(children_.begin(), children_.end(),
+        [child](const std::unique_ptr<Widget>& c) { return c.get() == child; });
+    if (it == children_.end())
+        return nullptr;
+
+    std::unique_ptr<Widget> out = std::move(*it);
+    children_.erase(it);
+    out->parent_ = nullptr;
+    out->setWindowRecursive(nullptr);
+    relayout();
+    markDirty();
+    return out;
+}
+
+void Widget::reparent(Widget* newParent)
+{
+    if (!newParent || newParent == this || !parent_)
+        return;
+
+    for (Widget* p = newParent; p; p = p->parent_)
+        if (p == this)
+            return; // cannot move a widget into its own subtree
+
+    std::unique_ptr<Widget> self = parent_->detachChild(this);
+    if (self)
+        newParent->addChild(std::move(self));
 }
 
 void Widget::setWindowRecursive(Window* w)
@@ -3533,7 +3611,8 @@ SplitView::SplitView(Widget* parent)
         int p = (orientation_ == Orientation::SideBySide) ? e.x : e.y;
         int d = dividerPos();
         if (p < d) p = d - p; else p = p - d;
-        if (p <= dividerW_ / 2 + 2)
+        int hitW = (dividerHitW_ > 0) ? dividerHitW_ : std::max(dividerW_, 6);
+        if (p <= hitW / 2)
             dragging_ = true;
     };
 
@@ -3579,6 +3658,12 @@ void SplitView::setDividerWidth(int px)
     if (dividerW_ == px) return;
     dividerW_ = px;
     relayout();
+}
+
+void SplitView::setDividerHitWidth(int px)
+{
+    if (px < 0) px = 0;
+    dividerHitW_ = px;
 }
 
 void SplitView::setDividerColor(Color color)
@@ -3684,6 +3769,11 @@ Drawer::Drawer(Widget* parent)
 {
     panel_ = addChild<Widget>();
     panel_->setPosition(0, 0);
+
+    closeButton_ = addChild<Widget>();
+    closeButton_->setVisible(false);
+    closeButton_->onMouseDown = [this](MouseEvent&) { close(); };
+
     visible_ = false;
     focusable_ = false;
 
@@ -3711,6 +3801,7 @@ void Drawer::setOpen(bool open)
     open_ = open;
     visible_ = open;
     if (panel_) panel_->setVisible(open);
+    if (closeButton_) closeButton_->setVisible(open && closeButtonVisible_);
 
     markDirty();
     requestRedraw();
@@ -3763,12 +3854,30 @@ void Drawer::setPanelColor(Color color)
     markDirty();
 }
 
+void Drawer::setCloseButtonVisible(bool visible)
+{
+    if (closeButtonVisible_ == visible) return;
+    closeButtonVisible_ = visible;
+    if (closeButton_)
+        closeButton_->setVisible(visible && open_);
+    markDirty();
+}
+
 void Drawer::layoutChildren()
 {
     if (!panel_) return;
     Rect pr = panelRect();
     panel_->setPosition(pr.x, pr.y);
     panel_->setSize(pr.w, pr.h);
+
+    if (closeButton_)
+    {
+        int cs = 24;
+        int cx = pr.x + pr.w - cs - 6;
+        int cy = pr.y + 6;
+        closeButton_->setPosition(cx, cy);
+        closeButton_->setSize(cs, cs);
+    }
 }
 
 void Drawer::onRender(SDL_Renderer* renderer)
@@ -3791,6 +3900,19 @@ void Drawer::onRender(SDL_Renderer* renderer)
     SDL_RenderFillRect(renderer, &panelBg);
 
     panel_->onRender(renderer);
+
+    if (closeButton_ && closeButton_->visible())
+    {
+        int cx = r.x + closeButton_->x();
+        int cy = r.y + closeButton_->y();
+        int cs = closeButton_->width();
+        SDL_SetRenderDrawColor(renderer, 220, 220, 220, 255);
+        SDL_RenderLine(renderer, (float)(cx + 7), (float)(cy + 7),
+                       (float)(cx + cs - 7), (float)(cy + cs - 7));
+        SDL_RenderLine(renderer, (float)(cx + cs - 7), (float)(cy + 7),
+                       (float)(cx + 7), (float)(cy + cs - 7));
+    }
+
     dirty_ = false;
 }
 
@@ -3931,6 +4053,13 @@ void Label::setWordWrap(bool wrap)
     markDirty();
 }
 
+void Label::setTextAlign(RichTextAlign align)
+{
+    if (textAlign_ == align) return;
+    textAlign_ = align;
+    markDirty();
+}
+
 void Label::onFontChanged()
 {
     layoutWidth_ = -1;
@@ -3961,7 +4090,18 @@ void Label::onRender(SDL_Renderer* renderer)
     for (const auto& line : layout_)
     {
         if (!line.empty())
-            detail::drawText(renderer, line.c_str(), r.x, curY, textColor_);
+        {
+            int x = r.x;
+            if (textAlign_ != RichTextAlign::Left)
+            {
+                int tw = detail::textWidth(line.c_str());
+                if (textAlign_ == RichTextAlign::Center)
+                    x = r.x + (r.w - tw) / 2;
+                else
+                    x = r.x + r.w - tw;
+            }
+            detail::drawText(renderer, line.c_str(), x, curY, textColor_);
+        }
         curY += lineH;
     }
 
@@ -4200,7 +4340,7 @@ TextBox::TextBox(Widget* parent)
 
 int TextBox::positionAtX(int localX) const
 {
-    int target = localX - 4 - scrollOffX_;
+    int target = localX - insetL_ - scrollOffX_;
     int pos = 0;
     int x = 0;
     int maskW = password_ ? maskCharWidth() : 0;
@@ -4263,6 +4403,30 @@ void TextBox::setSelectionColor(Color color)
 void TextBox::setBorderColor(Color color)
 {
     borderColor_ = color;
+    markDirty();
+}
+
+void TextBox::setContentInsets(int left, int top, int right, int bottom)
+{
+    insetL_ = std::max(0, left);
+    insetT_ = std::max(0, top);
+    insetR_ = std::max(0, right);
+    insetB_ = std::max(0, bottom);
+    adjustScroll();
+    markDirty();
+}
+
+void TextBox::setBorderVisible(bool visible)
+{
+    if (borderVisible_ == visible) return;
+    borderVisible_ = visible;
+    markDirty();
+}
+
+void TextBox::setBackgroundVisible(bool visible)
+{
+    if (backgroundVisible_ == visible) return;
+    backgroundVisible_ = visible;
     markDirty();
 }
 
@@ -4435,7 +4599,7 @@ bool TextBox::scrollByPixels(int dx)
     if (dx == 0) return false;
 
     int textW = displayWidth();
-    int visibleW = width_ - 8;
+    int visibleW = std::max(1, width_ - insetL_ - insetR_);
     if (textW <= visibleW)
     {
         if (scrollOffX_ != 0)
@@ -4508,7 +4672,7 @@ void TextBox::adjustScroll()
                  ? maskCharWidth() * codepointCount(composition_)
                  : detail::textWidth(composition_.c_str());
     int textW    = displayWidth() + compW;
-    int visibleW = width_ - 8;
+    int visibleW = std::max(1, width_ - insetL_ - insetR_);
 
     if (visibleW <= 0)
     {
@@ -4542,8 +4706,10 @@ bool TextBox::textInputRect(Rect& rect) const
 {
     Rect r = absoluteRect();
     int lineH = currentFont()->lineHeight();
-    int cx = r.x + 4 + scrollOffX_ + displayWidthTo(cursorPos_);
-    int cy = r.y + (r.h - lineH) / 2;
+    int cy0 = r.y + insetT_;
+    int ch = std::max(1, r.h - insetT_ - insetB_);
+    int cx = r.x + insetL_ + scrollOffX_ + displayWidthTo(cursorPos_);
+    int cy = cy0 + (ch - lineH) / 2;
     int cw = password_ ? maskCharWidth() * codepointCount(composition_)
                        : detail::textWidth(composition_.c_str());
     rect = { cx, cy, std::max(1, cw), lineH };
@@ -4565,17 +4731,29 @@ void TextBox::onRender(SDL_Renderer* renderer)
     detail::ClipGuard clip(renderer, r.x, r.y, r.w, r.h);
 
     //background
-    SDL_SetRenderDrawColor(renderer, bgColor_.r, bgColor_.g, bgColor_.b, bgColor_.a);
-    SDL_RenderFillRect(renderer, &fc);
+    if (backgroundVisible_)
+    {
+        SDL_SetRenderDrawColor(renderer, bgColor_.r, bgColor_.g, bgColor_.b, bgColor_.a);
+        SDL_RenderFillRect(renderer, &fc);
+    }
 
     //border (no special focus color; the caret indicates focus)
-    SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g,
-                           borderColor_.b, borderColor_.a);
-    SDL_RenderRect(renderer, &fc);
+    if (borderVisible_)
+    {
+        SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g,
+                               borderColor_.b, borderColor_.a);
+        SDL_RenderRect(renderer, &fc);
+    }
+
+    int cx0 = r.x + insetL_;
+    int cy0 = r.y + insetT_;
+    int cw  = std::max(1, r.w - insetL_ - insetR_);
+    int ch  = std::max(1, r.h - insetT_ - insetB_);
+    detail::ClipGuard contentClip(renderer, cx0, cy0, cw, ch);
 
     int lineH = currentFont()->lineHeight();
-    int tx = r.x + 4 + scrollOffX_;
-    int ty = r.y + (r.h - lineH) / 2;
+    int tx = cx0 + scrollOffX_;
+    int ty = cy0 + (ch - lineH) / 2;
 
     //selection background
     if (hasSelection())
@@ -4688,6 +4866,8 @@ ListBox::ListBox(Widget* parent)
             setSelectedIndex(idx);
             if (onItemSelected)
                 onItemSelected(idx);
+            if (e.clicks >= 2 && onItemActivated)
+                onItemActivated(idx);
         }
     };
     onMouseMove = [this](MouseEvent& e)
@@ -5589,12 +5769,12 @@ TextArea::TextArea(Widget* parent)
         baseMove(e);
         if (draggingScrollbar() || !mouseSelecting_) return;
 
-        //auto-scroll while dragging outside the viewport
+        //auto-scroll while dragging outside the content viewport
         int lineH = lineHeight();
-        if (e.y < 0) setScrollOffset(scrollX_, scrollY_ - lineH);
-        else if (e.y >= height_) setScrollOffset(scrollX_, scrollY_ + lineH);
-        if (e.x < 0) setScrollOffset(scrollX_ - 16, scrollY_);
-        else if (e.x >= width_) setScrollOffset(scrollX_ + 16, scrollY_);
+        if (e.y < insetT_) setScrollOffset(scrollX_, scrollY_ - lineH);
+        else if (e.y >= insetT_ + contentHeight()) setScrollOffset(scrollX_, scrollY_ + lineH);
+        if (e.x < insetL_) setScrollOffset(scrollX_ - 16, scrollY_);
+        else if (e.x >= insetL_ + contentWidth()) setScrollOffset(scrollX_ + 16, scrollY_);
 
         int line = 0, col = 0;
         lineColAt(e.x, e.y, line, col);
@@ -5672,6 +5852,31 @@ void TextArea::setWordWrap(bool wrap)
     wordWrap_ = wrap;
     visualDirty_ = true;
     refreshLayout();
+}
+
+void TextArea::setContentInsets(int left, int top, int right, int bottom)
+{
+    insetL_ = std::max(0, left);
+    insetT_ = std::max(0, top);
+    insetR_ = std::max(0, right);
+    insetB_ = std::max(0, bottom);
+    visualDirty_ = true;
+    refreshLayout();
+    markDirty();
+}
+
+void TextArea::setBorderVisible(bool visible)
+{
+    if (borderVisible_ == visible) return;
+    borderVisible_ = visible;
+    markDirty();
+}
+
+void TextArea::setBackgroundVisible(bool visible)
+{
+    if (backgroundVisible_ == visible) return;
+    backgroundVisible_ = visible;
+    markDirty();
 }
 
 bool TextArea::hasSelection() const
@@ -5824,7 +6029,7 @@ void TextArea::lineColAt(int localX, int localY, int& line, int& col) const
     }
 
     int lineH = lineHeight();
-    int row = (localY + scrollY_) / lineH;
+    int row = (localY + scrollY_ - insetT_) / lineH;
     if (row < 0) row = 0;
     if (row >= (int)visualLines_.size()) row = (int)visualLines_.size() - 1;
 
@@ -5833,7 +6038,7 @@ void TextArea::lineColAt(int localX, int localY, int& line, int& col) const
 
     auto lines = splitLines();
     const std::string& ln = lines[line];
-    int targetX = localX + scrollX_ - lineNumberGutterWidth() - 4;
+    int targetX = localX + scrollX_ - insetL_ - lineNumberGutterWidth() - 4;
     if (targetX < 0) targetX = 0;
 
     int x = 0;
@@ -5923,7 +6128,7 @@ void TextArea::buildVisualLines() const
 {
     int gutter = lineNumberGutterWidth();
     if (!visualDirty_ &&
-        visualWidth_ == width_ &&
+        visualWidth_ == contentWidth() &&
         visualGutter_ == gutter &&
         visualFontEpoch_ == fontEpoch() &&
         visualLetterSpacing_ == letterSpacing_ &&
@@ -5942,7 +6147,7 @@ void TextArea::buildVisualLines() const
     }
     else
     {
-        int avail = std::max(1, width_ - gutter - 18);
+        int avail = std::max(1, contentWidth() - gutter - 18);
         for (int i = 0; i < (int)lines.size(); ++i)
         {
             const std::string& ln = lines[i];
@@ -5998,7 +6203,7 @@ void TextArea::buildVisualLines() const
         }
     }
 
-    visualWidth_ = width_;
+    visualWidth_ = contentWidth();
     visualGutter_ = gutter;
     visualFontEpoch_ = fontEpoch();
     visualLetterSpacing_ = letterSpacing_;
@@ -6102,8 +6307,8 @@ void TextArea::ensureCursorVisible()
     int bottom = top + lineH;
     if (top < scrollY_)
         setScrollOffset(scrollX_, top);
-    else if (bottom > scrollY_ + height_)
-        setScrollOffset(scrollX_, bottom - height_);
+    else if (bottom > scrollY_ + contentHeight())
+        setScrollOffset(scrollX_, bottom - contentHeight());
 
     if (wordWrap_)
     {
@@ -6115,8 +6320,8 @@ void TextArea::ensureCursorVisible()
              prefixWidth(lines[cursorLine_], cursorCol_);
     if (cx < scrollX_)
         setScrollOffset(cx - 4, scrollY_);
-    else if (cx > scrollX_ + width_ - 8)
-        setScrollOffset(cx - width_ + 8, scrollY_);
+    else if (cx > scrollX_ + contentWidth() - 8)
+        setScrollOffset(cx - contentWidth() + 8, scrollY_);
 }
 
 void TextArea::setCursor(int line, int col)
@@ -6574,9 +6779,9 @@ bool TextArea::textInputRect(Rect& rect) const
     buildVisualLines();
     int row = visualRowForCursor();
     const VisualLine& v = visualLines_[row];
-    int cx = r.x + lineNumberGutterWidth() + 4 - scrollX_ +
+    int cx = r.x + insetL_ + lineNumberGutterWidth() + 4 - scrollX_ +
              prefixWidth(lines[line], col) - prefixWidth(lines[line], v.start);
-    int cy = r.y + row * lineH - scrollY_;
+    int cy = r.y + insetT_ + row * lineH - scrollY_;
     rect = { cx, cy, 1, lineH };
     return true;
 }
@@ -6597,13 +6802,25 @@ void TextArea::onRender(SDL_Renderer* renderer)
     detail::ClipGuard clip(renderer, r.x, r.y, r.w, r.h);
 
     //background
-    SDL_SetRenderDrawColor(renderer, bgColor_.r, bgColor_.g, bgColor_.b, bgColor_.a);
-    SDL_RenderFillRect(renderer, &fc);
+    if (backgroundVisible_)
+    {
+        SDL_SetRenderDrawColor(renderer, bgColor_.r, bgColor_.g, bgColor_.b, bgColor_.a);
+        SDL_RenderFillRect(renderer, &fc);
+    }
 
     //border
-    SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g,
-                           borderColor_.b, borderColor_.a);
-    SDL_RenderRect(renderer, &fc);
+    if (borderVisible_)
+    {
+        SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g,
+                               borderColor_.b, borderColor_.a);
+        SDL_RenderRect(renderer, &fc);
+    }
+
+    int cx0 = r.x + insetL_;
+    int cy0 = r.y + insetT_;
+    int cw  = contentWidth();
+    int ch  = contentHeight();
+    detail::ClipGuard contentClip(renderer, cx0, cy0, cw, ch);
 
     auto lines = splitLines();
     int maxW = 0;
@@ -6621,8 +6838,8 @@ void TextArea::onRender(SDL_Renderer* renderer)
         const VisualLine& v = visualLines_[row];
         const std::string& ln = lines[v.line];
 
-        int ly = r.y + row * lineH - scrollY_;
-        if (ly + lineH < r.y || ly > r.y + r.h) continue;  //skip offscreen
+        int ly = cy0 + row * lineH - scrollY_;
+        if (ly + lineH < cy0 || ly > cy0 + ch) continue;  //skip offscreen
 
         if (sel && v.line >= selSL && v.line <= selEL)
         {
@@ -6633,9 +6850,9 @@ void TextArea::onRender(SDL_Renderer* renderer)
 
             if (c1 > c0)
             {
-                int x0 = r.x + gutter + 4 - scrollX_ + prefixWidth(ln, c0) -
+                int x0 = cx0 + gutter + 4 - scrollX_ + prefixWidth(ln, c0) -
                          prefixWidth(ln, v.start);
-                int x1 = r.x + gutter + 4 - scrollX_ + prefixWidth(ln, c1) -
+                int x1 = cx0 + gutter + 4 - scrollX_ + prefixWidth(ln, c1) -
                          prefixWidth(ln, v.start);
 
                 SDL_FRect selr = { (float)x0, (float)ly, (float)(x1 - x0), (float)lineH };
@@ -6650,7 +6867,7 @@ void TextArea::onRender(SDL_Renderer* renderer)
             std::string segment = ln.substr((std::size_t)v.start,
                                             (std::size_t)(v.end - v.start));
             drawLine(renderer, segment,
-                     r.x + gutter + 4 - scrollX_, ly, textColor_);
+                     cx0 + gutter + 4 - scrollX_, ly, textColor_);
         }
 
         if (!wordWrap_)
@@ -6672,10 +6889,10 @@ void TextArea::onRender(SDL_Renderer* renderer)
             int col = cursorCol_;
             if (col > (int)ln.size()) col = (int)ln.size();
 
-            int cx = r.x + gutter + 4 - scrollX_ +
+            int cx = cx0 + gutter + 4 - scrollX_ +
                      prefixWidth(ln, col) - prefixWidth(ln, v.start);
-            int cy = r.y + row * lineH - scrollY_;
-            if (cy + lineH >= r.y && cy <= r.y + r.h)
+            int cy = cy0 + row * lineH - scrollY_;
+            if (cy + lineH >= cy0 && cy <= cy0 + ch)
             {
                 SDL_SetRenderDrawColor(renderer, cursorColor_.r, cursorColor_.g,
                                        cursorColor_.b, cursorColor_.a);
@@ -6692,10 +6909,10 @@ void TextArea::onRender(SDL_Renderer* renderer)
         const std::string& ln = lines[v.line];
         int col = std::min(cursorCol_, (int)ln.size());
 
-        int cx = r.x + gutter + 4 - scrollX_ +
+        int cx = cx0 + gutter + 4 - scrollX_ +
                  prefixWidth(ln, col) - prefixWidth(ln, v.start);
-        int cy = r.y + row * lineH - scrollY_;
-        if (cy + lineH >= r.y && cy <= r.y + r.h)
+        int cy = cy0 + row * lineH - scrollY_;
+        if (cy + lineH >= cy0 && cy <= cy0 + ch)
         {
             std::string comp;
             comp.reserve(composition_.size());
@@ -6715,8 +6932,8 @@ void TextArea::onRender(SDL_Renderer* renderer)
     //is clipped underneath it.
     if (gutter > 0)
     {
-        SDL_FRect gb = { (float)(r.x + 1), (float)(r.y + 1),
-                         (float)(gutter - 1), (float)(r.h - 2) };
+        SDL_FRect gb = { (float)(cx0 + 1), (float)(cy0 + 1),
+                         (float)(gutter - 1), (float)(ch - 2) };
         SDL_SetRenderDrawColor(renderer,
             (Uint8)(bgColor_.r * 4 / 5),
             (Uint8)(bgColor_.g * 4 / 5),
@@ -6726,12 +6943,12 @@ void TextArea::onRender(SDL_Renderer* renderer)
 
         SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g,
                                borderColor_.b, borderColor_.a);
-        SDL_RenderLine(renderer, (float)(r.x + gutter - 1), (float)r.y,
-                       (float)(r.x + gutter - 1), (float)(r.y + r.h));
+        SDL_RenderLine(renderer, (float)(cx0 + gutter - 1), (float)cy0,
+                       (float)(cx0 + gutter - 1), (float)(cy0 + ch));
 
         int first = std::max(0, scrollY_ / lineH);
         int last = std::min((int)visualLines_.size(),
-                            (scrollY_ + r.h) / lineH + 1);
+                            (scrollY_ + ch) / lineH + 1);
         Color numberColor = getWindow()
             ? getWindow()->theme().mutedText
             : Color(115, 120, 130);
@@ -6743,8 +6960,8 @@ void TextArea::onRender(SDL_Renderer* renderer)
 
             std::string num = std::to_string(v.line + 1);
             int nw = detail::textWidth(num.c_str());
-            int nx = r.x + gutter - 8 - nw;
-            int ny = r.y + row * lineH - scrollY_;
+            int nx = cx0 + gutter - 8 - nw;
+            int ny = cy0 + row * lineH - scrollY_;
             detail::drawText(renderer, num.c_str(), nx, ny, numberColor);
         }
     }
@@ -7964,6 +8181,13 @@ void RichTextView::onRender(SDL_Renderer* renderer)
     detail::ClipGuard clip(renderer, r.x, r.y, r.w, r.h);
 
     ensureLayout();
+
+    if (blocks_.empty() && onEmptyState)
+    {
+        onEmptyState(renderer, r);
+        dirty_ = false;
+        return;
+    }
 
     //block backgrounds
     for (const auto& br : blockRects_)
@@ -9443,8 +9667,15 @@ void Application::setUiScale(float scale)
     if (scale < 0.5f) scale = 0.5f;
     if (scale > 4.0f) scale = 4.0f;
     uiScale_ = scale;
+
+    if (Font* f = currentFont())
+        f->setRasterScale(scale);
+    ++detail::fontEpoch_;
+    detail::clearAllTextCaches();
+
     for (auto& win : windows_)
         win->setUiScale(scale);
+    refreshFont();
 }
 
 void Application::setTouchMode(bool enabled)
@@ -11389,6 +11620,12 @@ void Application::handleKeyEvent(const SDL_Event& ev)
                         if (lb->onItemSelected) lb->onItemSelected(idx);
                     }
                 }
+            }
+            else if (k == SDLK_RETURN || k == SDLK_KP_ENTER)
+            {
+                int idx = lb->selectedIndex();
+                if (idx >= 0 && lb->onItemActivated)
+                    lb->onItemActivated(idx);
             }
         }
         else if (auto* sl = dynamic_cast<Slider*>(focus))
