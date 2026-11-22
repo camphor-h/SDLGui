@@ -191,7 +191,7 @@ Widget* autoW(bool on);      // calls setAutoWidth()
 | `preferredHeight(width)` / `preferredWidth(height)` | `int` | Content size hint (defaults to the current size) |
 | `requestRedraw()` | `void` | Ask the owning window to draw another frame |
 
-Auto-sizing is opt-in and preserves the fixed-rectangle meaning of `sz()`. `Label`, `Button`, `CheckBox` and `Box` implement `preferredHeight()`/`preferredWidth()`; auto-sized widgets are re-measured when the font changes, so text is not clipped after switching to a taller font.
+Auto-sizing is opt-in and preserves the fixed-rectangle meaning of `sz()`. `Label`, `Button`, `CheckBox`, `TextBox`, `DropDown`, `ComboBox`, `ContextMenu` and `Box` implement `preferredHeight()`/`preferredWidth()`; auto-sized widgets are re-measured when the font changes, so text is not clipped after switching to a taller font.
 
 Disabled widgets reject hit tests (unclickable) and render dimmed. Disabling a parent disables all children.
 
@@ -559,6 +559,17 @@ app.run();  // Blocks until quit
 
 The event loop polls events at the configured FPS (default 60), but idle windows are not redrawn. `setFPS(30)` reduces the polling/animation rate; `setFPS(0)` removes the frame delay. `processEvents()` is public and can be called manually for custom event loops (used internally by blocking dialogs).
 
+**Android IME height**
+
+SDL3 does not expose the on-screen keyboard height. Register a `WindowInsets` listener in your Android activity, convert the IME inset from pixels to logical units, and pass it to `setKeyboardInset()`:
+
+```cpp
+// Kotlin/Java side: WindowInsets.Type.ime().bottom / uiScale
+app.setKeyboardInset(imeBottomPx / uiScale);
+```
+
+Also set the activity window to `SOFT_INPUT_ADJUST_NOTHING`. Otherwise Android pans/resizes the window in addition to the library's inset, and you get double keyboard height.
+
 #### Keyboard Focus
 
 - `Tab` / `Shift+Tab` focus traversal is **opt-in**; enable it with `app.setTabTraversal(true)`. It cycles focusable widgets (TextBox, TextArea, ComboBox, Button, CheckBox, ListBox, Slider; custom widgets via `setFocusable(true)`)
@@ -584,12 +595,18 @@ lb->onItemSelected = [](int index) { /* ... */ };
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `addItem(string)` | `void` | Add an item |
+| `setItems(items, selected = -1)` | `void` | Replace all items, reset scroll, optionally select |
 | `removeItem(index)` | `void` | Remove item at index |
-| `clear()` | `void` | Remove all items |
+| `clear()` | `void` | Remove all items and reset scroll |
 | `selectedIndex()` | `int` | Get selected index (-1 if none) |
+| `setSelectedIndex(index, ensureVisible = true)` | `void` | Select and scroll the row into view |
 | `selectedItem()` | `string&` | Get selected item text |
-| `onItemSelected` | callback | Fired when an item is clicked |
+| `itemHeight()` | `int` | Row height, `max(20, lineHeight + 6)` |
+| `scrollOffsetY()` | `int` | Current vertical scroll offset |
+| `onItemSelected` | callback | Fired when the press is released on an item |
 | `onItemActivated` | callback | Fired on double-click or Enter (`void(int)`) |
+
+Selection is committed on release, not on press. On touch, a swipe that moves past the slop threshold pans the list without changing the selection; dragging the scrollbar is also excluded from panning so the thumb stays draggable. Row height follows the current font, and scroll offsets are clamped when items change.
 
 #### Slider
 
@@ -1540,7 +1557,7 @@ Widget* autoW(bool on);      // 调用 setAutoWidth()
 | `preferredHeight(width)` / `preferredWidth(height)` | `int` | 内容尺寸建议值（默认返回当前尺寸） |
 | `requestRedraw()` | `void` | 请求所属窗口再绘制一帧 |
 
-自动尺寸默认关闭，`sz()` 的固定矩形语义保持不变。`Label`、`Button`、`CheckBox` 和 `Box` 实现了 `preferredHeight()` / `preferredWidth()`；字体切换时会重新测量自动尺寸控件，切换到行高更大的字体也不会截断文字。
+自动尺寸默认关闭，`sz()` 的固定矩形语义保持不变。`Label`、`Button`、`CheckBox`、`TextBox`、`DropDown`、`ComboBox`、`ContextMenu` 和 `Box` 实现了 `preferredHeight()` / `preferredWidth()`；字体切换时会重新测量自动尺寸控件，切换到行高更大的字体也不会截断文字。
 
 禁用控件不响应点击（hitTest 失败），渲染时显示灰色。禁用父控件会连带禁用所有子控件。
 
@@ -1908,6 +1925,17 @@ app.run();  // 阻塞至退出
 
 事件循环按目标帧率轮询事件（默认 60 FPS），但空闲窗口不会重绘。`setFPS(30)` 可降低轮询/动画节奏；`setFPS(0)` 则去掉帧延迟。`processEvents()` 是公开的，可用于自定义事件循环（阻塞对话框内部也使用它）。
 
+**Android 输入法高度**
+
+SDL3 不提供软键盘高度。请在 Android Activity 中注册 `WindowInsets` 监听，把 IME  inset 按 UI 缩放换算成逻辑像素后传给 `setKeyboardInset()`：
+
+```cpp
+// Kotlin/Java 侧：WindowInsets.Type.ime().bottom / uiScale
+app.setKeyboardInset(imeBottomPx / uiScale);
+```
+
+同时把 Activity 窗口设为 `SOFT_INPUT_ADJUST_NOTHING`。否则系统会在库的 inset 之外再 pan/resize 一次，出现双倍键盘高度。
+
 #### 键盘焦点
 
 - `Tab` / `Shift+Tab` 焦点遍历是**可选功能**，默认关闭；调用 `app.setTabTraversal(true)` 开启。开启后在可聚焦控件间切换（TextBox、TextArea、ComboBox、Button、CheckBox、ListBox、Slider；自定义控件用 `setFocusable(true)` 加入）
@@ -1933,12 +1961,18 @@ lb->onItemSelected = [](int index) { /* ... */ };
 | 方法 | 返回 | 说明 |
 |------|------|------|
 | `addItem(string)` | `void` | 添加条目 |
+| `setItems(items, selected = -1)` | `void` | 批量替换条目、重置滚动，并可选选中 |
 | `removeItem(index)` | `void` | 删除指定条目 |
-| `clear()` | `void` | 清空所有条目 |
+| `clear()` | `void` | 清空所有条目并重置滚动 |
 | `selectedIndex()` | `int` | 获取选中索引（-1 表示无） |
+| `setSelectedIndex(index, ensureVisible = true)` | `void` | 选中并把该行滚入可视区 |
 | `selectedItem()` | `string&` | 获取选中条目的文本 |
-| `onItemSelected` | 回调 | 点击条目时触发 |
+| `itemHeight()` | `int` | 行高，`max(20, lineHeight + 6)` |
+| `scrollOffsetY()` | `int` | 当前纵向滚动偏移 |
+| `onItemSelected` | 回调 | 在条目上抬起时触发 |
 | `onItemActivated` | 回调 | 双击或回车时触发 `void(int)` |
+
+选中在抬起时提交，而不是按下时。触摸滑动超过阈值时只滚动、不改变选中；从滚动条开始的手势不会进入平移，因此可以正常拖动滑块。行高跟随当前字体，条目变化时滚动偏移会自动夹紧。
 
 #### Slider（滑块）
 

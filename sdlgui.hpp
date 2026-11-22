@@ -443,6 +443,13 @@ public:
 
     //touch panning / long-press behaviour
     virtual bool canPan() const { return false; }
+    //Whether a pan gesture starting at this absolute point should scroll.
+    //Scrollviews return false for their scrollbars so dragging works there.
+    virtual bool canPanAt(int absX, int absY) const
+    {
+        (void)absX; (void)absY;
+        return canPan();
+    }
     virtual bool panBy(int dx, int dy) { (void)dx; (void)dy; return false; }
     virtual bool wantsLongPressSelection() const { return false; }
 
@@ -850,6 +857,7 @@ public:
     int  cursorPosition() const { return cursorPos_; }
     bool hasSelection() const { return selAnchor_ >= 0 && selAnchor_ != cursorPos_; }
     bool textInputRect(Rect& rect) const override;
+    int  preferredHeight(int width) const override;
 
     void        selectAll();
     void        clearSelection();
@@ -910,12 +918,15 @@ public:
     explicit ListBox(Widget* parent = nullptr);
 
     void addItem(const std::string& item);
+    void setItems(std::vector<std::string> items, int selected = -1);
     void removeItem(int index);
     void clear();
     int  selectedIndex() const { return selected_; }
-    void setSelectedIndex(int index);
+    void setSelectedIndex(int index, bool ensureVisible = true);
     const std::string& selectedItem() const;
     int  itemCount() const { return (int)items_.size(); }
+    int  itemHeight() const;
+    int  scrollOffsetY() const { return scrollOffY_; }
 
     void setBackgroundColor(Color color);
     void setTextColor(Color color);
@@ -929,21 +940,26 @@ public:
     Widget* txt(const std::string& s) { addItem(s); return this; }
 
     bool canPan() const override;
+    bool canPanAt(int absX, int absY) const override;
     bool panBy(int dx, int dy) override;
 
 protected:
     void onRender(SDL_Renderer* renderer) override;
     void onMouseWheel(int delta) override;
+    void onFontChanged() override;
 
 private:
     std::vector<std::string> items_;
     int selected_ = -1;
     int hovered_  = -1;
     int scrollOffY_ = 0;
+    int pressedIdx_ = -1;
+    int pressStartY_ = 0;
     bool draggingScrollbar_ = false;
     int  dragStartY_ = 0;
     int  dragStartOff_ = 0;
-    int itemH_ = 20;
+    void clampScroll();
+    void ensureRowVisible(int index);
     Color textColor_ = Color::White;
     Color bgColor_ = Color(30, 30, 30);
     Color selColor_ = Color(40, 80, 140);
@@ -1222,6 +1238,7 @@ public:
         if (expanded_) { expanded_ = false; listH_ = 0; markDirty(); }
     }
     void renderPopupOverlay(SDL_Renderer* renderer, int offX, int offY) override;
+    int  preferredHeight(int width) const override;
 
     std::function<void(int)> onItemSelected;
 
@@ -1234,6 +1251,7 @@ private:
     int selected_ = -1;
     bool expanded_ = false;
     int listH_ = 0;
+    int popupItemHeight() const;
     Rect popupListRect() const;
     Color bgColor_ = Color(50, 50, 50);
     Color textColor_ = Color::White;
@@ -1275,6 +1293,7 @@ public:
     void moveCursorEnd();
 
     bool textInputRect(Rect& rect) const override;
+    int  preferredHeight(int width) const override;
 
     bool isPopupOpen() const override { return expanded_; }
     void closePopup() override
@@ -1298,6 +1317,7 @@ private:
     bool expanded_ = false;
     int listH_ = 0;
     bool focused_ = false;
+    int popupItemHeight() const;
     Rect popupListRect() const;
     Color bgColor_ = Color::White;
     Color textColor_ = Color::Black;
@@ -1332,6 +1352,10 @@ public:
     bool draggingScrollbar() const { return sbDragging_; }
 
     bool canPan() const override;
+    bool canPanAt(int absX, int absY) const override
+    {
+        return canPan() && !hitTestScrollbar(absX, absY);
+    }
     bool panBy(int dx, int dy) override;
 
 protected:
@@ -2070,7 +2094,7 @@ private:
 
     Window* findWindowByID(Uint32 id);
     Widget* hitTest(Widget* w, int absX, int absY);
-    Widget* findPanTarget(Widget* w) const;
+    Widget* findPanTarget(Widget* w, int absX, int absY) const;
     void    updateHovered(Widget* target);
     void    updateTextInputArea(Widget* widget);
     void    ensureWidgetVisible(Widget* widget);
@@ -4898,6 +4922,11 @@ bool TextBox::textInputRect(Rect& rect) const
     return true;
 }
 
+int TextBox::preferredHeight(int) const
+{
+    return std::max(24, currentFont()->lineHeight() + insetT_ + insetB_);
+}
+
 void TextBox::onFontChanged()
 {
     adjustScroll();
@@ -5008,10 +5037,11 @@ ListBox::ListBox(Widget* parent)
     : Widget(parent)
 {
     focusable_ = true;
-    itemH_ = 20;
     onMouseDown = [this](MouseEvent& e)
     {
-        int contentH = (int)items_.size() * itemH_;
+        pressedIdx_ = -1;
+
+        int contentH = (int)items_.size() * itemHeight();
         int sbW = (getWindow() && getWindow()->touchMode()) ? 24 : 10;
 
         //scrollbar
@@ -5032,7 +5062,8 @@ ListBox::ListBox(Widget* parent)
             }
             else
             {
-                int page = std::max(itemH_, height_ - itemH_);
+                int ih = itemHeight();
+                int page = std::max(ih, height_ - ih);
                 if (e.y < thumbY) scrollOffY_ -= page;
                 else              scrollOffY_ += page;
                 if (scrollOffY_ < 0) scrollOffY_ = 0;
@@ -5042,21 +5073,16 @@ ListBox::ListBox(Widget* parent)
             return;
         }
 
-        int idx = (e.y + scrollOffY_) / itemH_;
-        if (idx >= 0 && idx < (int)items_.size())
-        {
-            setSelectedIndex(idx);
-            if (onItemSelected)
-                onItemSelected(idx);
-            if (e.clicks >= 2 && onItemActivated)
-                onItemActivated(idx);
-        }
+        //Select on release, not on press: a swipe must not change selection.
+        int idx = (e.y + scrollOffY_) / itemHeight();
+        pressedIdx_ = (idx >= 0 && idx < (int)items_.size()) ? idx : -1;
+        pressStartY_ = e.y;
     };
     onMouseMove = [this](MouseEvent& e)
     {
         if (draggingScrollbar_)
         {
-            int contentH = (int)items_.size() * itemH_;
+            int contentH = (int)items_.size() * itemHeight();
             int maxOff = std::max(0, contentH - height_);
             int sbW = (getWindow() && getWindow()->touchMode()) ? 24 : 10;
             int thumbH = std::max(sbW, height_ * height_ / std::max(1, contentH));
@@ -5076,18 +5102,41 @@ ListBox::ListBox(Widget* parent)
             return;
         }
 
-        int idx = (e.y + scrollOffY_) / itemH_;
+        //Touch has no hover state; avoid highlighting rows while dragging.
+        if (e.pointerType == PointerType::Touch)
+            return;
+
+        int idx = (e.y + scrollOffY_) / itemHeight();
         int sbW = (getWindow() && getWindow()->touchMode()) ? 24 : 10;
-        if (e.x >= width_ - sbW && (int)items_.size() * itemH_ > height_)
+        if (e.x >= width_ - sbW && (int)items_.size() * itemHeight() > height_)
             idx = -1;
 
         int old = hovered_;
         hovered_ = (idx >= 0 && idx < (int)items_.size()) ? idx : -1;
         if (old != hovered_) markDirty();
     };
-    onMouseUp = [this](MouseEvent&)
+    onMouseUp = [this](MouseEvent& e)
     {
         draggingScrollbar_ = false;
+
+        int idx = pressedIdx_;
+        pressedIdx_ = -1;
+        if (idx < 0) return;
+
+        //A synthetic cancel (scroll start / long press) has no button.
+        if (e.button != SDL_BUTTON_LEFT) return;
+
+        int slop = (e.pointerType == PointerType::Touch) ? 12 : 6;
+        if (std::abs(e.y - pressStartY_) > slop) return;
+
+        int releaseIdx = (e.y + scrollOffY_) / itemHeight();
+        if (releaseIdx != idx) return;
+
+        setSelectedIndex(idx);
+        if (onItemSelected)
+            onItemSelected(idx);
+        if (e.clicks >= 2 && onItemActivated)
+            onItemActivated(idx);
     };
     onMouseLeave = [this](MouseEvent&)
     {
@@ -5095,21 +5144,68 @@ ListBox::ListBox(Widget* parent)
     };
 }
 
+int ListBox::itemHeight() const
+{
+    return std::max(20, currentFont()->lineHeight() + 6);
+}
+
+void ListBox::clampScroll()
+{
+    int maxOff = std::max(0, (int)items_.size() * itemHeight() - height_);
+    if (scrollOffY_ < 0) scrollOffY_ = 0;
+    if (scrollOffY_ > maxOff) scrollOffY_ = maxOff;
+}
+
+void ListBox::ensureRowVisible(int index)
+{
+    if (index < 0) return;
+    int ih = itemHeight();
+    int top = index * ih;
+    int bottom = top + ih;
+    if (top < scrollOffY_)
+        scrollOffY_ = top;
+    else if (bottom > scrollOffY_ + height_)
+        scrollOffY_ = bottom - height_;
+    clampScroll();
+}
+
 void ListBox::addItem(const std::string& item)
 {
     items_.push_back(item);
+    clampScroll();
+    markDirty();
+}
+
+void ListBox::setItems(std::vector<std::string> items, int selected)
+{
+    items_ = std::move(items);
+    selected_ = (selected >= -1 && selected < (int)items_.size()) ? selected : -1;
+    hovered_ = -1;
+    pressedIdx_ = -1;
+    scrollOffY_ = 0;
+    if (selected_ >= 0)
+        ensureRowVisible(selected_);
     markDirty();
 }
 
 bool ListBox::canPan() const
 {
-    return (int)items_.size() * itemH_ > height_;
+    return (int)items_.size() * itemHeight() > height_;
+}
+
+bool ListBox::canPanAt(int absX, int absY) const
+{
+    if (!canPan()) return false;
+    (void)absY;
+    Rect r = absoluteRect();
+    int sbW = (getWindow() && getWindow()->touchMode()) ? 24 : 10;
+    return absX < r.x + r.w - sbW;
 }
 
 bool ListBox::panBy(int dx, int dy)
 {
     (void)dx;
-    int contentH = (int)items_.size() * itemH_;
+    int contentH = (int)items_.size() * itemHeight();
     int maxOff = std::max(0, contentH - height_);
     if (maxOff <= 0 || dy == 0) return false;
 
@@ -5125,7 +5221,19 @@ void ListBox::removeItem(int index)
     if (index >= 0 && index < (int)items_.size())
     {
         items_.erase(items_.begin() + index);
-        if (selected_ == index) selected_ = -1;
+        if (selected_ == index)
+            selected_ = -1;
+        else if (selected_ > index)
+            --selected_;
+        if (hovered_ == index)
+            hovered_ = -1;
+        else if (hovered_ > index)
+            --hovered_;
+        if (pressedIdx_ == index)
+            pressedIdx_ = -1;
+        else if (pressedIdx_ > index)
+            --pressedIdx_;
+        clampScroll();
         markDirty();
     }
 }
@@ -5134,15 +5242,22 @@ void ListBox::clear()
 {
     items_.clear();
     selected_ = -1;
+    hovered_ = -1;
+    pressedIdx_ = -1;
+    scrollOffY_ = 0;
     markDirty();
 }
 
 void ListBox::onMouseWheel(int delta)
 {
-    scrollOffY_ -= delta * 20;
-    int maxOff = (int)items_.size() * itemH_ - height_;
-    if (scrollOffY_ < 0) scrollOffY_ = 0;
-    if (scrollOffY_ > maxOff) scrollOffY_ = std::max(0, maxOff);
+    scrollOffY_ -= delta * itemHeight();
+    clampScroll();
+    markDirty();
+}
+
+void ListBox::onFontChanged()
+{
+    clampScroll();
     markDirty();
 }
 
@@ -5152,11 +5267,13 @@ void ListBox::setSelectionColor(Color color) { selColor_ = color; markDirty(); }
 void ListBox::setHoverColor(Color color) { hoverColor_ = color; markDirty(); }
 void ListBox::setBorderColor(Color color) { borderColor_ = color; markDirty(); }
 
-void ListBox::setSelectedIndex(int index)
+void ListBox::setSelectedIndex(int index, bool ensureVisible)
 {
     if (index >= -1 && index < (int)items_.size())
     {
         selected_ = index;
+        if (ensureVisible && selected_ >= 0)
+            ensureRowVisible(selected_);
         markDirty();
     }
 }
@@ -5180,32 +5297,34 @@ void ListBox::onRender(SDL_Renderer* renderer)
     SDL_SetRenderDrawColor(renderer, bgColor_.r, bgColor_.g, bgColor_.b, bgColor_.a);
     SDL_RenderFillRect(renderer, &bg);
 
+    int ih = itemHeight();
+    int textOffY = (ih - currentFont()->lineHeight()) / 2;
     for (int i = 0; i < (int)items_.size(); i++)
     {
-        int y = r.y + i * itemH_ - scrollOffY_;
-        if (y + itemH_ < r.y || y > r.y + r.h) continue;  //skip offscreen
+        int y = r.y + i * ih - scrollOffY_;
+        if (y + ih < r.y || y > r.y + r.h) continue;  //skip offscreen
 
-        SDL_FRect row = { (float)r.x, (float)y, (float)r.w, (float)itemH_ };
+        SDL_FRect row = { (float)r.x, (float)y, (float)r.w, (float)ih };
 
         if (i == selected_)
         {
             SDL_SetRenderDrawColor(renderer, selColor_.r, selColor_.g, selColor_.b, selColor_.a);
             SDL_RenderFillRect(renderer, &row);
-            detail::drawText(renderer, items_[i].c_str(), r.x + 4, y + 2, textColor_);
+            detail::drawText(renderer, items_[i].c_str(), r.x + 4, y + textOffY, textColor_);
         }
         else if (i == hovered_)
         {
             SDL_SetRenderDrawColor(renderer, hoverColor_.r, hoverColor_.g, hoverColor_.b, hoverColor_.a);
             SDL_RenderFillRect(renderer, &row);
-            detail::drawText(renderer, items_[i].c_str(), r.x + 4, y + 2, textColor_);
+            detail::drawText(renderer, items_[i].c_str(), r.x + 4, y + textOffY, textColor_);
         }
         else
         {
-            detail::drawText(renderer, items_[i].c_str(), r.x + 4, y + 2, textColor_);
+            detail::drawText(renderer, items_[i].c_str(), r.x + 4, y + textOffY, textColor_);
         }
     }
 
-    int contentH = (int)items_.size() * itemH_;
+    int contentH = (int)items_.size() * ih;
     if (contentH > height_)
     {
         const int sbW = (getWindow() && getWindow()->touchMode()) ? 24 : 10;
@@ -5510,10 +5629,11 @@ DropDown::DropDown(Widget* parent)
         {
             Rect lr = popupListRect();
             int localTop = lr.y - absoluteY();
-            int lh = (int)items_.size() * 20;
+            int ih = popupItemHeight();
+            int lh = (int)items_.size() * ih;
             if (e.y >= localTop && e.y < localTop + lh)
             {
-                int idx = (e.y - localTop) / 20;
+                int idx = (e.y - localTop) / ih;
                 if (idx >= 0 && idx < (int)items_.size())
                 {
                     selected_ = idx;
@@ -5528,7 +5648,7 @@ DropDown::DropDown(Widget* parent)
 
         expanded_ = !expanded_;
         if (expanded_)
-            listH_ = (int)items_.size() * 20;
+            listH_ = (int)items_.size() * popupItemHeight();
         else
             listH_ = 0;
         markDirty();
@@ -5570,9 +5690,19 @@ void DropDown::setSelectedIndex(int index)
     }
 }
 
+int DropDown::popupItemHeight() const
+{
+    return std::max(20, currentFont()->lineHeight() + 6);
+}
+
+int DropDown::preferredHeight(int) const
+{
+    return std::max(24, currentFont()->lineHeight() + 8);
+}
+
 Rect DropDown::popupListRect() const
 {
-    int lh = (int)items_.size() * 20;
+    int lh = (int)items_.size() * popupItemHeight();
     if (lh <= 0) return { 0, 0, 0, 0 };
 
     Rect r = absoluteRect();
@@ -5646,17 +5776,20 @@ void DropDown::renderPopupOverlay(SDL_Renderer* renderer, int offX, int offY)
     SDL_FRect listBg = { (float)lx, (float)ly, (float)lr.w, (float)lh };
     SDL_RenderFillRect(renderer, &listBg);
 
+    int ih = popupItemHeight();
+    int textOffY = (ih - currentFont()->lineHeight()) / 2;
     for (int i = 0; i < (int)items_.size(); i++)
     {
-        int iy = ly + i * 20;
+        int iy = ly + i * ih;
         if (i == selected_)
         {
             SDL_SetRenderDrawColor(renderer, selectionColor_.r, selectionColor_.g,
                                    selectionColor_.b, selectionColor_.a);
-            SDL_FRect sel = { (float)lx, (float)iy, (float)lr.w, 20.0f };
+            SDL_FRect sel = { (float)lx, (float)iy, (float)lr.w, (float)ih };
             SDL_RenderFillRect(renderer, &sel);
         }
-        detail::drawText(renderer, items_[i].c_str(), lx + 4, iy + 2, textColor_);
+        detail::drawText(renderer, items_[i].c_str(), lx + 4,
+                         iy + textOffY, textColor_);
     }
 
     SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g,
@@ -5681,7 +5814,7 @@ ComboBox::ComboBox(Widget* parent)
         if (e.x >= btnX)
         {
             expanded_ = !expanded_;
-            if (expanded_) listH_ = (int)items_.size() * 20;
+            if (expanded_) listH_ = (int)items_.size() * popupItemHeight();
             else           listH_ = 0;
             markDirty();
             return;
@@ -5691,10 +5824,11 @@ ComboBox::ComboBox(Widget* parent)
         {
             Rect lr = popupListRect();
             int localTop = lr.y - absoluteY();
-            int lh = (int)items_.size() * 20;
+            int ih = popupItemHeight();
+            int lh = (int)items_.size() * ih;
             if (e.y >= localTop && e.y < localTop + lh)
             {
-                int idx = (e.y - localTop) / 20;
+                int idx = (e.y - localTop) / ih;
                 if (idx >= 0 && idx < (int)items_.size())
                 {
                     selected_ = idx;
@@ -5811,9 +5945,19 @@ void ComboBox::moveCursorEnd()
     markDirty();
 }
 
+int ComboBox::popupItemHeight() const
+{
+    return std::max(20, currentFont()->lineHeight() + 6);
+}
+
+int ComboBox::preferredHeight(int) const
+{
+    return std::max(24, currentFont()->lineHeight() + 8);
+}
+
 Rect ComboBox::popupListRect() const
 {
-    int lh = (int)items_.size() * 20;
+    int lh = (int)items_.size() * popupItemHeight();
     if (lh <= 0) return { 0, 0, 0, 0 };
 
     Rect r = absoluteRect();
@@ -5903,17 +6047,20 @@ void ComboBox::renderPopupOverlay(SDL_Renderer* renderer, int offX, int offY)
     SDL_FRect flc = { (float)lx, (float)ly, (float)lr.w, (float)lh };
     SDL_RenderFillRect(renderer, &flc);
 
+    int ih = popupItemHeight();
+    int textOffY = (ih - currentFont()->lineHeight()) / 2;
     for (int i = 0; i < (int)items_.size(); i++)
     {
-        int iy = ly + i * 20;
+        int iy = ly + i * ih;
         if (i == selected_)
         {
             SDL_SetRenderDrawColor(renderer, selectionColor_.r, selectionColor_.g,
                                    selectionColor_.b, selectionColor_.a);
-            SDL_FRect sel = { (float)lx, (float)iy, (float)lr.w, 20.0f };
+            SDL_FRect sel = { (float)lx, (float)iy, (float)lr.w, (float)ih };
             SDL_RenderFillRect(renderer, &sel);
         }
-        detail::drawText(renderer, items_[i].c_str(), lx + 4, iy + 2, textColor_);
+        detail::drawText(renderer, items_[i].c_str(), lx + 4,
+                         iy + textOffY, textColor_);
     }
 
     SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g,
@@ -9867,6 +10014,12 @@ void Application::setUiScale(float scale)
 {
     if (scale < 0.5f) scale = 0.5f;
     if (scale > 4.0f) scale = 4.0f;
+
+    //Idempotent: saving settings often re-applies the same value, and
+    //invalidating every font cache for that would be wasteful.
+    if (std::fabs(scale - uiScale_) < 0.0001f)
+        return;
+
     uiScale_ = scale;
 
     if (Font* f = currentFont())
@@ -10562,12 +10715,16 @@ void Application::updateHovered(Widget* target)
 
 static void scrollOffsetForWidget(Widget* w, int& offX, int& offY);
 
-Widget* Application::findPanTarget(Widget* w) const
+Widget* Application::findPanTarget(Widget* w, int absX, int absY) const
 {
     for (Widget* cur = w; cur; cur = cur->parent())
     {
         if (cur->canPan())
-            return cur;
+        {
+            //Stop at the first pan-capable widget: if the gesture started on
+            //its scrollbar, do not fall back to an ancestor and scroll that.
+            return cur->canPanAt(absX, absY) ? cur : nullptr;
+        }
     }
     return nullptr;
 }
@@ -10747,7 +10904,7 @@ void Application::handleTouchEvent(const SDL_Event& ev)
         touch_.velocityX     = 0.0f;
         touch_.velocityY     = 0.0f;
         touch_.target        = hitTest(&win->root(), lx, ly);
-        touch_.panTarget     = findPanTarget(touch_.target);
+        touch_.panTarget     = findPanTarget(touch_.target, lx, ly);
         touch_.longPressTarget = touch_.target;
         touch_.longPressFired  = false;
 
@@ -10773,7 +10930,14 @@ void Application::handleTouchEvent(const SDL_Event& ev)
     {
         int dx = lx - touch_.startX;
         int dy = ly - touch_.startY;
+        int stepX = lx - touch_.lastX;
+        int stepY = ly - touch_.lastY;
         int slop = (win->touchMode() ? 10 : 8);
+
+        //Publish the new position before any press cancellation so the
+        //synthetic mouse-up carries the post-slop coordinates.
+        touch_.lastX = lx;
+        touch_.lastY = ly;
 
         if (!touch_.scrolling && !touch_.selecting && !touch_.axisLocked &&
             (std::abs(dx) > slop || std::abs(dy) > slop))
@@ -10802,8 +10966,8 @@ void Application::handleTouchEvent(const SDL_Event& ev)
 
         if (touch_.scrolling)
         {
-            int stepX = touch_.axisX ? (lx - touch_.lastX) : 0;
-            int stepY = touch_.axisX ? 0 : (ly - touch_.lastY);
+            stepX = touch_.axisX ? stepX : 0;
+            stepY = touch_.axisX ? 0 : stepY;
 
             if (stepX != 0 || stepY != 0)
             {
@@ -10840,16 +11004,22 @@ void Application::handleTouchEvent(const SDL_Event& ev)
         {
             dispatchTouchMouse(SDL_EVENT_MOUSE_MOTION, lx, ly, 0, 0);
         }
+        else if (pressedWidget_)
+        {
+            //Drag capture for widgets that are not scrolling (scrollbar
+            //thumbs, sliders, custom drag controls).
+            dispatchTouchMouse(SDL_EVENT_MOUSE_MOTION, lx, ly, 0, 0);
+        }
         //pendingPress: wait for the long-press timer; movement within the
         //slop threshold is intentionally ignored.
-
-        touch_.lastX = lx;
-        touch_.lastY = ly;
         return;
     }
 
     if (ev.type == SDL_EVENT_FINGER_UP)
     {
+        touch_.lastX = lx;
+        touch_.lastY = ly;
+
         if (touch_.scrolling)
         {
             float speed = touch_.axisX ? touch_.velocityX : touch_.velocityY;
@@ -10883,8 +11053,19 @@ void Application::handleTouchEvent(const SDL_Event& ev)
         }
         else
         {
-            dispatchTouchMouse(SDL_EVENT_MOUSE_BUTTON_UP, lx, ly,
-                               SDL_BUTTON_LEFT, 1);
+            int slop = (win->touchMode() ? 10 : 8);
+            bool dragged = std::abs(lx - touch_.startX) > slop ||
+                           std::abs(ly - touch_.startY) > slop;
+            if (dragged && pressedWidget_)
+            {
+                //Finish a drag without turning it into a click.
+                cancelTouchPress();
+            }
+            else
+            {
+                dispatchTouchMouse(SDL_EVENT_MOUSE_BUTTON_UP, lx, ly,
+                                   SDL_BUTTON_LEFT, 1);
+            }
         }
 
         touch_ = TouchGesture{};
@@ -10912,8 +11093,14 @@ void Application::updateTouch()
     if (!touch_.longPressFired && touch_.longPressTarget)
     {
         Widget* target = touch_.longPressTarget;
-        touch_.longPressFired = true;
         touch_.longPressTarget = nullptr;
+
+        //Nothing registered a long-press action: leave the press alone so a
+        //slow tap still behaves like a normal click on release.
+        if (!target->onLongPress && !target->onContextMenu)
+            return;
+
+        touch_.longPressFired = true;
 
         //Release the visual pressed state without generating a click.
         cancelTouchPress();
@@ -11069,6 +11256,13 @@ void Application::showContextMenu(Window* win, Widget* target, MouseEvent& me)
 
 void Application::setFocus(Widget* w, bool fromKeyboard)
 {
+    auto isTextEditable = [](Widget* widget)
+    {
+        return dynamic_cast<TextBox*>(widget) != nullptr
+            || dynamic_cast<ComboBox*>(widget) != nullptr
+            || dynamic_cast<TextArea*>(widget) != nullptr;
+    };
+
     if (focused_ == w)
     {
         if (w)
@@ -11080,18 +11274,17 @@ void Application::setFocus(Widget* w, bool fromKeyboard)
                     win->focusRing_ = fromKeyboard;
                     win->requestRedraw();
                 }
+
+                //Tapping an already focused editor must re-open the mobile
+                //IME (the user may have dismissed it with the back key).
+                if (isTextEditable(w) && win->handle() &&
+                    !SDL_TextInputActive(win->handle()))
+                    SDL_StartTextInput(win->handle());
             }
             updateTextInputArea(w);
         }
         return;
     }
-
-    auto isTextEditable = [](Widget* widget)
-    {
-        return dynamic_cast<TextBox*>(widget) != nullptr
-            || dynamic_cast<ComboBox*>(widget) != nullptr
-            || dynamic_cast<TextArea*>(widget) != nullptr;
-    };
 
     //deactivate old focus
     if (focused_)
