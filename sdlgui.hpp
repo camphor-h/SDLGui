@@ -577,6 +577,19 @@ public:
     void setDividerHitWidth(int px); //0 = max(dividerWidth, 6)
     int  dividerHitWidth() const { return dividerHitW_; }
 
+    //Pin one pane to a fixed pixel size (0 or 1). px <= 0 clears it and
+    //returns that pane to ratio mode. Dragging the divider clears both.
+    void setPaneSize(int index, int px);
+    void clearPaneSize(int index);
+    int  paneSize(int index) const
+    {
+        return (index >= 0 && index < 2) ? fixedPane_[index] : -1;
+    }
+    bool hasFixedPane() const
+    {
+        return fixedPane_[0] > 0 || fixedPane_[1] > 0;
+    }
+
     void setDividerColor(Color color);
     Color dividerColor() const { return dividerColor_; }
 
@@ -593,6 +606,7 @@ private:
     int   minPane_ = 40;
     int   dividerW_ = 6;
     int   dividerHitW_ = 0;
+    int   fixedPane_[2] = { -1, -1 };
     Color dividerColor_ = Color(70, 70, 75);
     bool  dragging_ = false;
 };
@@ -934,6 +948,13 @@ public:
     void setHoverColor(Color color);
     void setBorderColor(Color color);
 
+    //Visual width; 0 = automatic (touch 24 / desktop 10). Hit width may be
+    //larger; 0 = same as the visual width.
+    void setScrollbarWidth(int px);
+    int  scrollbarWidth() const;
+    void setScrollbarHitWidth(int px);
+    int  scrollbarHitWidth() const;
+
     std::function<void(int)> onItemSelected;
     std::function<void(int)> onItemActivated;
 
@@ -958,6 +979,8 @@ private:
     bool draggingScrollbar_ = false;
     int  dragStartY_ = 0;
     int  dragStartOff_ = 0;
+    int  sbWidthOverride_ = 0;
+    int  sbHitWidthOverride_ = 0;
     void clampScroll();
     void ensureRowVisible(int index);
     Color textColor_ = Color::White;
@@ -1345,6 +1368,13 @@ public:
     void scrollbarH(bool show) { showHScroll_ = show; markDirty(); }
     void setScrollbarColors(Color track, Color thumb);
 
+    //Visual width of the scrollbar; 0 = automatic (touch 24 / desktop 10).
+    void setScrollbarWidth(int px);
+    int  scrollbarWidth() const;
+    //Touch/hit width, can be larger than the visual width; 0 = visual width.
+    void setScrollbarHitWidth(int px);
+    int  scrollbarHitWidth() const;
+
     ScrollView* sbV(bool s) { scrollbarV(s); return this; }
     ScrollView* sbH(bool s) { scrollbarH(s); return this; }
 
@@ -1376,6 +1406,8 @@ private:
     bool sbVertical_ = false;
     bool showVScroll_ = false;
     bool showHScroll_ = false;
+    int  sbWidthOverride_ = 0;
+    int  sbHitWidthOverride_ = 0;
     Color scrollTrackColor_ = Color(40, 40, 40);
     Color scrollThumbColor_ = Color(100, 100, 100);
 };
@@ -1941,6 +1973,7 @@ private:
     bool          useSafeArea_     = false;
     Rect          safeArea_        = { 0, 0, 800, 600 };
     int           keyboardInset_   = 0;
+    int           baseAreaH_       = 0; //area height without the IME (updated while inset == 0)
     bool          shown_           = false;
     bool          redraw_          = true;
     uint64_t      lastBlinkPhase_  = 0;
@@ -2020,6 +2053,9 @@ public:
     //Reserve space for an on-screen keyboard on all windows.
     void    setKeyboardInset(int px);
     int     keyboardInset() const { return keyboardInset_; }
+    //Push the current caret rectangle to the platform IME. Call after any
+    //layout change that can move the focused text widget.
+    void    refreshTextInputArea();
 
     void    setUseSafeArea(bool enabled);
     bool    useSafeArea() const { return useSafeArea_; }
@@ -3793,8 +3829,33 @@ void SplitView::setSplit(float ratio)
 {
     if (ratio < 0.0f) ratio = 0.0f;
     if (ratio > 1.0f) ratio = 1.0f;
-    if (ratio_ == ratio) return;
+
+    bool wasFixed = hasFixedPane();
+    if (ratio_ == ratio && !wasFixed) return;
+
     ratio_ = ratio;
+    fixedPane_[0] = fixedPane_[1] = -1;
+    relayout();
+}
+
+void SplitView::setPaneSize(int index, int px)
+{
+    if (index < 0 || index > 1) return;
+    if (px <= 0)
+    {
+        clearPaneSize(index);
+        return;
+    }
+    if (fixedPane_[index] == px) return;
+    fixedPane_[index] = px;
+    relayout();
+}
+
+void SplitView::clearPaneSize(int index)
+{
+    if (index < 0 || index > 1) return;
+    if (fixedPane_[index] < 0) return;
+    fixedPane_[index] = -1;
     relayout();
 }
 
@@ -3869,12 +3930,31 @@ void SplitView::layoutChildren()
     }
 
     int avail = std::max(0, main - dividerW_);
-    int first = (int)(avail * ratio_ + 0.5f);
+    int first;
 
-    if (minPane_ > 0 && avail >= minPane_ * 2)
-        first = std::max(minPane_, std::min(first, avail - minPane_));
+    int fixed0 = fixedPane_[0];
+    int fixed1 = fixedPane_[1];
+    if (fixed0 > 0 || fixed1 > 0)
+    {
+        if (fixed0 > 0)
+            first = fixed0;
+        else
+            first = avail - fixed1;
+
+        if (minPane_ > 0 && avail >= minPane_ * 2)
+            first = std::max(minPane_, std::min(first, avail - minPane_));
+        else
+            first = std::max(0, std::min(first, avail));
+    }
     else
-        first = std::max(0, std::min(first, avail));
+    {
+        first = (int)(avail * ratio_ + 0.5f);
+
+        if (minPane_ > 0 && avail >= minPane_ * 2)
+            first = std::max(minPane_, std::min(first, avail - minPane_));
+        else
+            first = std::max(0, std::min(first, avail));
+    }
 
     int second = avail - first;
 
@@ -5042,10 +5122,11 @@ ListBox::ListBox(Widget* parent)
         pressedIdx_ = -1;
 
         int contentH = (int)items_.size() * itemHeight();
-        int sbW = (getWindow() && getWindow()->touchMode()) ? 24 : 10;
+        int sbW = scrollbarWidth();
+        int sbHit = scrollbarHitWidth();
 
         //scrollbar
-        if (contentH > height_ && e.x >= width_ - sbW)
+        if (contentH > height_ && e.x >= width_ - sbHit)
         {
             int maxOff = contentH - height_;
             int thumbH = std::max(sbW, height_ * height_ / contentH);
@@ -5084,7 +5165,7 @@ ListBox::ListBox(Widget* parent)
         {
             int contentH = (int)items_.size() * itemHeight();
             int maxOff = std::max(0, contentH - height_);
-            int sbW = (getWindow() && getWindow()->touchMode()) ? 24 : 10;
+            int sbW = scrollbarWidth();
             int thumbH = std::max(sbW, height_ * height_ / std::max(1, contentH));
             int trackH = height_ - thumbH;
             if (trackH > 0 && maxOff > 0)
@@ -5107,8 +5188,8 @@ ListBox::ListBox(Widget* parent)
             return;
 
         int idx = (e.y + scrollOffY_) / itemHeight();
-        int sbW = (getWindow() && getWindow()->touchMode()) ? 24 : 10;
-        if (e.x >= width_ - sbW && (int)items_.size() * itemHeight() > height_)
+        int sbHit = scrollbarHitWidth();
+        if (e.x >= width_ - sbHit && (int)items_.size() * itemHeight() > height_)
             idx = -1;
 
         int old = hovered_;
@@ -5198,8 +5279,8 @@ bool ListBox::canPanAt(int absX, int absY) const
     if (!canPan()) return false;
     (void)absY;
     Rect r = absoluteRect();
-    int sbW = (getWindow() && getWindow()->touchMode()) ? 24 : 10;
-    return absX < r.x + r.w - sbW;
+    int sbHit = scrollbarHitWidth();
+    return absX < r.x + r.w - sbHit;
 }
 
 bool ListBox::panBy(int dx, int dy)
@@ -5267,6 +5348,33 @@ void ListBox::setSelectionColor(Color color) { selColor_ = color; markDirty(); }
 void ListBox::setHoverColor(Color color) { hoverColor_ = color; markDirty(); }
 void ListBox::setBorderColor(Color color) { borderColor_ = color; markDirty(); }
 
+void ListBox::setScrollbarWidth(int px)
+{
+    if (px < 0) px = 0;
+    if (sbWidthOverride_ == px) return;
+    sbWidthOverride_ = px;
+    markDirty();
+}
+
+int ListBox::scrollbarWidth() const
+{
+    if (sbWidthOverride_ > 0) return sbWidthOverride_;
+    Window* win = getWindow();
+    return (win && win->touchMode()) ? 24 : 10;
+}
+
+void ListBox::setScrollbarHitWidth(int px)
+{
+    if (px < 0) px = 0;
+    sbHitWidthOverride_ = px;
+}
+
+int ListBox::scrollbarHitWidth() const
+{
+    if (sbHitWidthOverride_ > 0) return sbHitWidthOverride_;
+    return scrollbarWidth();
+}
+
 void ListBox::setSelectedIndex(int index, bool ensureVisible)
 {
     if (index >= -1 && index < (int)items_.size())
@@ -5327,7 +5435,7 @@ void ListBox::onRender(SDL_Renderer* renderer)
     int contentH = (int)items_.size() * ih;
     if (contentH > height_)
     {
-        const int sbW = (getWindow() && getWindow()->touchMode()) ? 24 : 10;
+        const int sbW = scrollbarWidth();
         int maxOff = contentH - height_;
         int thumbH = std::max(sbW, height_ * height_ / contentH);
         int trackH = height_ - thumbH;
@@ -5345,7 +5453,7 @@ void ListBox::onRender(SDL_Renderer* renderer)
 
         SDL_FRect thumb = { (float)(r.x + r.w - sbW + 1),
                             (float)(r.y + thumbY),
-                            (float)(sbW - 2), (float)thumbH };
+                            (float)std::max(1, sbW - 2), (float)thumbH };
         SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g,
                                borderColor_.b, borderColor_.a);
         SDL_RenderFillRect(renderer, &thumb);
@@ -8771,9 +8879,10 @@ ScrollView::ScrollView(Widget* parent)
 {
     onMouseDown = [this](MouseEvent& e)
     {
-        int sbSize = scrollbarSize();
+        int sbHit = scrollbarHitWidth();
+        int sbSize = scrollbarWidth();
         //vertical scrollbar
-        if (showVScroll_ && contentH_ > height_ && e.x >= width_ - sbSize)
+        if (showVScroll_ && contentH_ > height_ && e.x >= width_ - sbHit)
         {
             float ratio = (float)height_ / contentH_;
             int thumbH = (int)(height_ * ratio);
@@ -8785,7 +8894,7 @@ ScrollView::ScrollView(Widget* parent)
             return;
         }
         //horizontal scrollbar
-        if (showHScroll_ && contentW_ > width_ && e.y >= height_ - sbSize)
+        if (showHScroll_ && contentW_ > width_ && e.y >= height_ - sbHit)
         {
             int sbW = width_;
             if (showVScroll_ && contentH_ > height_) sbW -= sbSize;
@@ -8888,7 +8997,7 @@ void ScrollView::renderScrollbars(SDL_Renderer* renderer)
         int thumbY  = sbY + (int)(scrollY_ * ratio);
         SDL_SetRenderDrawColor(renderer, scrollThumbColor_.r, scrollThumbColor_.g,
                                scrollThumbColor_.b, scrollThumbColor_.a);
-        SDL_FRect thumb = { (float)(sbX + 1), (float)thumbY, (float)(sbW - 2), (float)thumbH };
+        SDL_FRect thumb = { (float)(sbX + 1), (float)thumbY, (float)std::max(1, sbW - 2), (float)thumbH };
         SDL_RenderFillRect(renderer, &thumb);
     }
 
@@ -8914,7 +9023,7 @@ void ScrollView::renderScrollbars(SDL_Renderer* renderer)
         int thumbX  = sbX + (int)(scrollX_ * ratio);
         SDL_SetRenderDrawColor(renderer, scrollThumbColor_.r, scrollThumbColor_.g,
                                scrollThumbColor_.b, scrollThumbColor_.a);
-        SDL_FRect thumb = { (float)thumbX, (float)(sbY + 1), (float)thumbW, (float)(sbH - 2) };
+        SDL_FRect thumb = { (float)thumbX, (float)(sbY + 1), (float)thumbW, (float)std::max(1, sbH - 2) };
         SDL_RenderFillRect(renderer, &thumb);
     }
 }
@@ -8928,10 +9037,11 @@ bool ScrollView::hitTestScrollbar(int absX, int absY) const
 {
     int ax = absoluteX();
     int ay = absoluteY();
-    int sbSize = scrollbarSize();
+    int sbHit = scrollbarHitWidth();
+    int sbSize = scrollbarWidth();
 
     if (showVScroll_ && contentH_ > height_
-        && absX >= ax + width_ - sbSize && absX < ax + width_)
+        && absX >= ax + width_ - sbHit && absX < ax + width_)
         return absY >= ay && absY < ay + height_;
 
     if (showHScroll_ && contentW_ > width_)
@@ -8939,16 +9049,43 @@ bool ScrollView::hitTestScrollbar(int absX, int absY) const
         int sbW = width_;
         if (showVScroll_ && contentH_ > height_) sbW -= sbSize;
         if (absX >= ax && absX < ax + sbW)
-            return absY >= ay + height_ - sbSize && absY < ay + height_;
+            return absY >= ay + height_ - sbHit && absY < ay + height_;
     }
 
     return false;
 }
 
-int ScrollView::scrollbarSize() const
+void ScrollView::setScrollbarWidth(int px)
 {
+    if (px < 0) px = 0;
+    if (sbWidthOverride_ == px) return;
+    sbWidthOverride_ = px;
+    relayout();
+    markDirty();
+}
+
+int ScrollView::scrollbarWidth() const
+{
+    if (sbWidthOverride_ > 0) return sbWidthOverride_;
     Window* win = getWindow();
     return (win && win->touchMode()) ? 24 : 10;
+}
+
+void ScrollView::setScrollbarHitWidth(int px)
+{
+    if (px < 0) px = 0;
+    sbHitWidthOverride_ = px;
+}
+
+int ScrollView::scrollbarHitWidth() const
+{
+    if (sbHitWidthOverride_ > 0) return sbHitWidthOverride_;
+    return scrollbarWidth();
+}
+
+int ScrollView::scrollbarSize() const
+{
+    return scrollbarWidth();
 }
 
 bool ScrollView::canPan() const
@@ -9224,12 +9361,36 @@ void Window::layoutRoot()
     Rect area = useSafeArea_ ? safeArea_
                              : Rect{ 0, 0, clientWidth_, clientHeight_ };
 
+    //Remember the un-keyboarded height so we only subtract the part the OS
+    //has not already removed by resizing the window.
+    if (keyboardInset_ <= 0)
+        baseAreaH_ = area.h;
+
     int top = area.y + titleBarHeight_;
-    int h   = area.h - titleBarHeight_ - keyboardInset_;
+    int h   = area.h - titleBarHeight_;
+
+    if (keyboardInset_ > 0)
+    {
+        if (baseAreaH_ > 0)
+        {
+            int target = baseAreaH_ - titleBarHeight_ - keyboardInset_;
+            if (target < h) h = target;
+        }
+        else
+        {
+            //No baseline yet (inset was set before the window existed).
+            h -= keyboardInset_;
+        }
+    }
+
     if (h < 0) h = 0;
 
     root_->setPosition(area.x, top);
     root_->setSize(area.w, h);
+
+    //Root geometry changed: the IME anchor must follow the focused editor.
+    if (auto* app = Application::instance())
+        app->refreshTextInputArea();
 }
 
 void Window::refreshMetrics()
@@ -10094,6 +10255,13 @@ void Application::refreshFont()
         if (win->focused_)
             updateTextInputArea(win->focused_);
     }
+}
+
+void Application::refreshTextInputArea()
+{
+    for (auto& win : windows_)
+        if (win->focused_)
+            updateTextInputArea(win->focused_);
 }
 
 void Application::updateTextInputArea(Widget* widget)
@@ -11276,9 +11444,11 @@ void Application::setFocus(Widget* w, bool fromKeyboard)
                 }
 
                 //Tapping an already focused editor must re-open the mobile
-                //IME (the user may have dismissed it with the back key).
+                //IME. Android's back key can hide the keyboard without
+                //clearing SDL's text-input-active flag, so check whether the
+                //screen keyboard is actually shown.
                 if (isTextEditable(w) && win->handle() &&
-                    !SDL_TextInputActive(win->handle()))
+                    !SDL_ScreenKeyboardShown(win->handle()))
                     SDL_StartTextInput(win->handle());
             }
             updateTextInputArea(w);

@@ -263,6 +263,16 @@ auto* editor  = split->addChild<sdlgui::VBox>(); // second visible child
 
 `SideBySide` splits left/right; `Stacked` splits top/bottom. Drag the divider to resize; `setMinPaneSize()` limits both panes. `setDividerHitWidth(px)` separates the visual divider width from the drag hit area (`0` = `max(dividerWidth, 6)`).
 
+Pin one pane to a fixed size so the other absorbs window/IME resizes:
+
+```cpp
+split->setOrientation(sdlgui::SplitView::Orientation::Stacked);
+split->setPaneSize(1, 96);   // bottom composer stays 96px tall
+// split->clearPaneSize(1);  // back to ratio mode
+```
+
+Only one fixed pane is needed; if both are set the first wins and the second gets the remainder. `setMinPaneSize()` clamps the fixed size when space is tight. Dragging the divider or calling `setSplit()` clears fixed panes and returns to ratio mode.
+
 **Drawer**
 
 A full-size overlay panel with a scrim. Add it as the last child of the root so it covers the other widgets:
@@ -428,6 +438,9 @@ sv->setContentSize(600, 400);
 | `scrollbarH(bool)` | `void` | Show/hide horizontal scrollbar (default: hidden) |
 | `sbV(bool)` | `ScrollView*` | Chainable scrollbarV |
 | `sbH(bool)` | `ScrollView*` | Chainable scrollbarH |
+| `setScrollbarWidth(px)` | `void` | Visual width; `0` = auto (touch 24 / desktop 10) |
+| `setScrollbarHitWidth(px)` | `void` | Hit/drag width; `0` = visual width |
+| `scrollbarWidth()` / `scrollbarHitWidth()` | `int` | Effective widths |
 
 ScrollView clips its children to its own bounds using `SDL_SetRenderClipRect`. Content is temporarily offset during rendering. Hit-testing properly accounts for scroll offset.
 
@@ -550,6 +563,7 @@ app.run();  // Blocks until quit
 | `setTouchMode(bool)` | `void` | Force mobile/touch behavior |
 | `setTouchTargetPadding(px)` | `void` | Extra hit-test padding in touch mode |
 | `setKeyboardInset(px)` | `void` | Reserve bottom space for an on-screen keyboard |
+| `refreshTextInputArea()` | `void` | Re-push the focused caret rect to the platform IME |
 
 **Callbacks:**
 
@@ -569,6 +583,8 @@ app.setKeyboardInset(imeBottomPx / uiScale);
 ```
 
 Also set the activity window to `SOFT_INPUT_ADJUST_NOTHING`. Otherwise Android pans/resizes the window in addition to the library's inset, and you get double keyboard height.
+
+The library records the pre-keyboard area height, so if the OS still resizes the window, the inset is only applied for the part the system has not already removed. Layout changes also re-push the caret rectangle to the IME automatically; call `refreshTextInputArea()` manually if you move a focused editor without a layout pass.
 
 #### Keyboard Focus
 
@@ -603,6 +619,7 @@ lb->onItemSelected = [](int index) { /* ... */ };
 | `selectedItem()` | `string&` | Get selected item text |
 | `itemHeight()` | `int` | Row height, `max(20, lineHeight + 6)` |
 | `scrollOffsetY()` | `int` | Current vertical scroll offset |
+| `setScrollbarWidth(px)` / `setScrollbarHitWidth(px)` | `void` | Independent visual/hit widths |
 | `onItemSelected` | callback | Fired when the press is released on an item |
 | `onItemActivated` | callback | Fired on double-click or Enter (`void(int)`) |
 
@@ -1629,6 +1646,16 @@ auto* editor  = split->addChild<sdlgui::VBox>(); // 第二个可见子控件
 
 `SideBySide` 左右分栏，`Stacked` 上下分栏。拖动分隔条调整比例；`setMinPaneSize()` 限制两侧最小尺寸。`setDividerHitWidth(px)` 可将视觉宽度与拖动命中宽度分开（`0` = `max(dividerWidth, 6)`）。
 
+可以把某一侧固定为像素高度/宽度，让另一侧吸收窗口或键盘造成的缩放：
+
+```cpp
+split->setOrientation(sdlgui::SplitView::Orientation::Stacked);
+split->setPaneSize(1, 96);   // 底部输入区固定 96px
+// split->clearPaneSize(1);  // 恢复比例模式
+```
+
+通常只需固定一侧；两侧都固定时第一侧优先，第二侧拿剩余空间。空间不足时会被 `setMinPaneSize()` 夹紧。拖动分隔条或调用 `setSplit()` 会清除固定尺寸并回到比例模式。
+
 **Drawer（抽屉）**
 
 带遮罩的全尺寸覆盖面板，适合移动端侧边栏。作为 root 的最后一个子控件添加，确保覆盖其他控件：
@@ -1794,6 +1821,9 @@ sv->setContentSize(600, 400);
 | `scrollbarH(bool)` | `void` | 显示/隐藏水平滚动条（默认隐藏） |
 | `sbV(bool)` | `ScrollView*` | 链式 scrollbarV |
 | `sbH(bool)` | `ScrollView*` | 链式 scrollbarH |
+| `setScrollbarWidth(px)` | `void` | 视觉宽度；`0` = 自动（触摸 24 / 桌面 10） |
+| `setScrollbarHitWidth(px)` | `void` | 命中/拖动宽度；`0` = 等于视觉宽度 |
+| `scrollbarWidth()` / `scrollbarHitWidth()` | `int` | 实际生效宽度 |
 
 ScrollView 通过 `SDL_SetRenderClipRect` 将子控件裁剪到自身边界内。渲染时内容会临时偏移。命中检测已正确处理滚动偏移。
 
@@ -1916,6 +1946,7 @@ app.run();  // 阻塞至退出
 | `setTouchMode(bool)` | `void` | 强制启用移动/触摸行为 |
 | `setTouchTargetPadding(px)` | `void` | 触摸模式下扩大命中区域 |
 | `setKeyboardInset(px)` | `void` | 为软键盘预留底部空间 |
+| `refreshTextInputArea()` | `void` | 重新把焦点光标矩形同步给平台输入法 |
 
 **回调：**
 
@@ -1935,6 +1966,8 @@ app.setKeyboardInset(imeBottomPx / uiScale);
 ```
 
 同时把 Activity 窗口设为 `SOFT_INPUT_ADJUST_NOTHING`。否则系统会在库的 inset 之外再 pan/resize 一次，出现双倍键盘高度。
+
+库会记录键盘弹出前的可用高度：即使系统仍然 resize 了窗口，也只会补扣系统尚未扣除的部分，不会重复减一次。布局变化后会自动刷新输入法光标矩形；如果你在不触发布局的情况下移动了焦点控件，可手动调用 `refreshTextInputArea()`。
 
 #### 键盘焦点
 
@@ -1969,6 +2002,7 @@ lb->onItemSelected = [](int index) { /* ... */ };
 | `selectedItem()` | `string&` | 获取选中条目的文本 |
 | `itemHeight()` | `int` | 行高，`max(20, lineHeight + 6)` |
 | `scrollOffsetY()` | `int` | 当前纵向滚动偏移 |
+| `setScrollbarWidth(px)` / `setScrollbarHitWidth(px)` | `void` | 分别设置视觉/命中宽度 |
 | `onItemSelected` | 回调 | 在条目上抬起时触发 |
 | `onItemActivated` | 回调 | 双击或回车时触发 `void(int)` |
 
