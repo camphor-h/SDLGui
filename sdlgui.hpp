@@ -53,6 +53,9 @@ enum class MessageBoxType   { Info, Warning, Error, Question };
 enum class MessageBoxButtons { OK, OKCancel, YesNo, YesNoCancel, RetryCancel };
 enum class MessageBoxResult  { None, OK, Cancel, Yes, No, Retry };
 
+//Optional clipboard sanitizer. Return an empty string to ignore the paste.
+using PasteFilter = std::function<std::string(const std::string&)>;
+
 //==============================================================================
 // Rect
 //==============================================================================
@@ -853,6 +856,10 @@ public:
     bool borderVisible() const { return borderVisible_; }
     bool backgroundVisible() const { return backgroundVisible_; }
 
+    //Called before pasting clipboard text; return "" to ignore the paste.
+    void setPasteFilter(PasteFilter filter);
+    const PasteFilter& pasteFilter() const { return pasteFilter_; }
+
     bool     scrollByPixels(int dx);
     void     adjustScroll();
 
@@ -921,6 +928,7 @@ private:
     bool        backgroundVisible_ = true;
     std::string composition_;
     TextKeyMap  keyMap_;
+    PasteFilter pasteFilter_;
 };
 
 //==============================================================================
@@ -1315,6 +1323,10 @@ public:
     void moveCursorHome();
     void moveCursorEnd();
 
+    //Called before pasting clipboard text; return "" to ignore the paste.
+    void setPasteFilter(PasteFilter filter);
+    const PasteFilter& pasteFilter() const { return pasteFilter_; }
+
     bool textInputRect(Rect& rect) const override;
     int  preferredHeight(int width) const override;
 
@@ -1340,6 +1352,7 @@ private:
     bool expanded_ = false;
     int listH_ = 0;
     bool focused_ = false;
+    PasteFilter pasteFilter_;
     int popupItemHeight() const;
     Rect popupListRect() const;
     Color bgColor_ = Color::White;
@@ -1381,6 +1394,12 @@ public:
     bool hitTestScrollbar(int absX, int absY) const;
     bool draggingScrollbar() const { return sbDragging_; }
 
+    //Allow finger panning per axis. Default: both enabled. Hiding a
+    //scrollbar does not disable panning; use this to lock an axis.
+    void setPanningEnabled(bool horizontal, bool vertical);
+    bool panningEnabledX() const { return panX_; }
+    bool panningEnabledY() const { return panY_; }
+
     bool canPan() const override;
     bool canPanAt(int absX, int absY) const override
     {
@@ -1408,6 +1427,8 @@ private:
     bool showHScroll_ = false;
     int  sbWidthOverride_ = 0;
     int  sbHitWidthOverride_ = 0;
+    bool panX_ = true;
+    bool panY_ = true;
     Color scrollTrackColor_ = Color(40, 40, 40);
     Color scrollThumbColor_ = Color(100, 100, 100);
 };
@@ -1436,6 +1457,9 @@ public:
     void     setBackgroundVisible(bool visible);
     bool     borderVisible() const { return borderVisible_; }
     bool     backgroundVisible() const { return backgroundVisible_; }
+    //Called before pasting clipboard text; return "" to ignore the paste.
+    void     setPasteFilter(PasteFilter filter);
+    const PasteFilter& pasteFilter() const { return pasteFilter_; }
     void     setShowLineNumbers(bool on) { showLineNumbers_ = on; refreshLayout(); markDirty(); }
     void     setAutoIndent(bool on) { autoIndent_ = on; }
     void     setSmartBackspace(bool on) { smartBackspace_ = on; }
@@ -1525,6 +1549,7 @@ private:
     bool        backgroundVisible_ = true;
     std::string composition_;
     TextKeyMap  keyMap_;
+    PasteFilter pasteFilter_;
 
     int contentWidth() const { return std::max(1, width_ - insetL_ - insetR_); }
     int contentHeight() const { return std::max(1, height_ - insetT_ - insetB_); }
@@ -1915,6 +1940,9 @@ public:
     //Logical pixels reserved at the bottom for an on-screen keyboard.
     void     setKeyboardInset(int px);
     int      keyboardInset() const { return keyboardInset_; }
+    //Explicitly show the on-screen keyboard for the focused widget.
+    //Returns false if the window or focus is not available.
+    bool     showTextInput();
     void     refreshMetrics();
 
     bool               valid()           const { return sdlWindow_ != nullptr && renderer_ != nullptr; }
@@ -1973,7 +2001,8 @@ private:
     bool          useSafeArea_     = false;
     Rect          safeArea_        = { 0, 0, 800, 600 };
     int           keyboardInset_   = 0;
-    int           baseAreaH_       = 0; //area height without the IME (updated while inset == 0)
+    int           baseAreaH_       = 0; //area height without the IME
+    int           baseAreaW_       = 0; //width the baseline was captured at
     bool          shown_           = false;
     bool          redraw_          = true;
     uint64_t      lastBlinkPhase_  = 0;
@@ -2056,6 +2085,8 @@ public:
     //Push the current caret rectangle to the platform IME. Call after any
     //layout change that can move the focused text widget.
     void    refreshTextInputArea();
+    //Ask the platform to show the on-screen keyboard for the focused editor.
+    void    startTextInput();
 
     void    setUseSafeArea(bool enabled);
     bool    useSafeArea() const { return useSafeArea_; }
@@ -2156,6 +2187,13 @@ private:
 // Implementation
 //==============================================================================
 #ifdef SDLGUI_IMPLEMENTATION
+
+static bool isTextEditableWidget(Widget* w)
+{
+    return dynamic_cast<TextBox*>(w) != nullptr
+        || dynamic_cast<ComboBox*>(w) != nullptr
+        || dynamic_cast<TextArea*>(w) != nullptr;
+}
 
 //==============================================================================
 // TextKeyMap
@@ -4702,6 +4740,11 @@ void TextBox::setContentInsets(int left, int top, int right, int bottom)
     markDirty();
 }
 
+void TextBox::setPasteFilter(PasteFilter filter)
+{
+    pasteFilter_ = std::move(filter);
+}
+
 void TextBox::setBorderVisible(bool visible)
 {
     if (borderVisible_ == visible) return;
@@ -5999,6 +6042,11 @@ bool ComboBox::textInputRect(Rect& rect) const
 
 void ComboBox::setText(const std::string& text) { text_ = text; cursorPos_ = (int)text_.size(); markDirty(); }
 
+void ComboBox::setPasteFilter(PasteFilter filter)
+{
+    pasteFilter_ = std::move(filter);
+}
+
 void ComboBox::insertText(const std::string& text)
 {
     if (text.empty()) return;
@@ -6319,6 +6367,11 @@ void TextArea::setContentInsets(int left, int top, int right, int bottom)
     visualDirty_ = true;
     refreshLayout();
     markDirty();
+}
+
+void TextArea::setPasteFilter(PasteFilter filter)
+{
+    pasteFilter_ = std::move(filter);
 }
 
 void TextArea::setBorderVisible(bool visible)
@@ -9088,13 +9141,24 @@ int ScrollView::scrollbarSize() const
     return scrollbarWidth();
 }
 
+void ScrollView::setPanningEnabled(bool horizontal, bool vertical)
+{
+    if (panX_ == horizontal && panY_ == vertical) return;
+    panX_ = horizontal;
+    panY_ = vertical;
+    markDirty();
+}
+
 bool ScrollView::canPan() const
 {
-    return contentW_ > width_ || contentH_ > height_;
+    return (panX_ && contentW_ > width_) ||
+           (panY_ && contentH_ > height_);
 }
 
 bool ScrollView::panBy(int dx, int dy)
 {
+    if (!panX_) dx = 0;
+    if (!panY_) dy = 0;
     if (dx == 0 && dy == 0) return false;
     int oldX = scrollX_;
     int oldY = scrollY_;
@@ -9362,9 +9426,19 @@ void Window::layoutRoot()
                              : Rect{ 0, 0, clientWidth_, clientHeight_ };
 
     //Remember the un-keyboarded height so we only subtract the part the OS
-    //has not already removed by resizing the window.
-    if (keyboardInset_ <= 0)
+    //has not already removed by resizing the window. A width change means a
+    //rotation/display change, so start a fresh baseline. Otherwise only grow
+    //the baseline while no keyboard is shown: an early IME-driven window
+    //resize must not lower it, or the inset would be subtracted twice.
+    if (baseAreaW_ != area.w)
+    {
+        baseAreaW_ = area.w;
         baseAreaH_ = area.h;
+    }
+    else if (keyboardInset_ <= 0)
+    {
+        baseAreaH_ = std::max(baseAreaH_, area.h);
+    }
 
     int top = area.y + titleBarHeight_;
     int h   = area.h - titleBarHeight_;
@@ -9430,6 +9504,17 @@ void Window::setKeyboardInset(int px)
     keyboardInset_ = px;
     layoutRoot();
     redraw_ = true;
+}
+
+bool Window::showTextInput()
+{
+    if (!sdlWindow_ || !focused_)
+        return false;
+
+    SDL_StartTextInput(sdlWindow_);
+    if (auto* app = Application::instance())
+        app->refreshTextInputArea();
+    return true;
 }
 
 void Window::setTitle(const char* title)
@@ -11422,15 +11507,21 @@ void Application::showContextMenu(Window* win, Widget* target, MouseEvent& me)
     }
 }
 
+void Application::startTextInput()
+{
+    if (!focused_)
+        return;
+
+    Window* win = focused_->getWindow();
+    if (!win || !win->handle())
+        return;
+
+    SDL_StartTextInput(win->handle());
+    updateTextInputArea(focused_);
+}
+
 void Application::setFocus(Widget* w, bool fromKeyboard)
 {
-    auto isTextEditable = [](Widget* widget)
-    {
-        return dynamic_cast<TextBox*>(widget) != nullptr
-            || dynamic_cast<ComboBox*>(widget) != nullptr
-            || dynamic_cast<TextArea*>(widget) != nullptr;
-    };
-
     if (focused_ == w)
     {
         if (w)
@@ -11445,10 +11536,9 @@ void Application::setFocus(Widget* w, bool fromKeyboard)
 
                 //Tapping an already focused editor must re-open the mobile
                 //IME. Android's back key can hide the keyboard without
-                //clearing SDL's text-input-active flag, so check whether the
-                //screen keyboard is actually shown.
-                if (isTextEditable(w) && win->handle() &&
-                    !SDL_ScreenKeyboardShown(win->handle()))
+                //clearing SDL's text-input-active flag and some devices keep
+                //SDL_ScreenKeyboardShown() true, so call unconditionally.
+                if (isTextEditableWidget(w) && win->handle())
                     SDL_StartTextInput(win->handle());
             }
             updateTextInputArea(w);
@@ -11469,7 +11559,7 @@ void Application::setFocus(Widget* w, bool fromKeyboard)
             oldWin->requestRedraw();
         }
 
-        if (isTextEditable(focused_))
+        if (isTextEditableWidget(focused_))
         {
             if (auto* oldTb = dynamic_cast<TextBox*>(focused_))
                 oldTb->clearComposition();
@@ -11509,7 +11599,7 @@ void Application::setFocus(Widget* w, bool fromKeyboard)
         if (focused_->onFocus) focused_->onFocus();
 
         //Keep the IME candidate window next to the focused editor.
-        if (isTextEditable(focused_))
+        if (isTextEditableWidget(focused_))
         {
             if (auto* win = focused_->getWindow())
             {
@@ -11951,7 +12041,10 @@ void Application::handleKeyEvent(const SDL_Event& ev)
                 {
                     std::string ins = clip;
                     SDL_free(clip);
-                    tb->insertText(ins);
+                    const PasteFilter& f = tb->pasteFilter();
+                    if (f) ins = f(ins);
+                    if (!ins.empty())
+                        tb->insertText(ins);
                 }
             }
             else if (action == TextEditAction::Backspace)
@@ -12072,8 +12165,12 @@ void Application::handleKeyEvent(const SDL_Event& ev)
                     char* clip = SDL_GetClipboardText();
                     if (clip)
                     {
-                        ta->insertText(clip);
+                        std::string ins = clip;
                         SDL_free(clip);
+                        const PasteFilter& f = ta->pasteFilter();
+                        if (f) ins = f(ins);
+                        if (!ins.empty())
+                            ta->insertText(ins);
                     }
                 }
                 break;
@@ -12112,8 +12209,12 @@ void Application::handleKeyEvent(const SDL_Event& ev)
                 char* clip = SDL_GetClipboardText();
                 if (clip)
                 {
-                    cb->insertText(clip);
+                    std::string ins = clip;
                     SDL_free(clip);
+                    const PasteFilter& f = cb->pasteFilter();
+                    if (f) ins = f(ins);
+                    if (!ins.empty())
+                        cb->insertText(ins);
                 }
             }
         }

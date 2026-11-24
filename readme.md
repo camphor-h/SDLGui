@@ -385,6 +385,7 @@ pw->setPlaceholder("password");
 | `setPlaceholderColor(Color)` | `void` | Set placeholder color |
 | `setContentInsets(l,t,r,b)` | `void` | Text/caret/selection inner insets |
 | `setBorderVisible(bool)` / `setBackgroundVisible(bool)` | `void` | Toggle border/background painting |
+| `setPasteFilter(filter)` | `void` | Sanitize clipboard text before insert; `""` ignores the paste |
 | `setMaxLength(int)` | `void` | Limit to N Unicode codepoints; `0` = unlimited |
 | `setPassword(bool)` | `void` | Mask the displayed text |
 | `setPasswordChar(char)` | `void` | Set mask character (default `*`) |
@@ -399,6 +400,15 @@ pw->setPlaceholder("password");
 | `clr(Color)` | `Widget*` | Chainable setTextColor |
 | `bgClr(Color)` | `Widget*` | Chainable setBackgroundColor |
 | `ph(string)` / `maxLen(int)` / `pwd(bool)` | `Widget*` | Chainable placeholder / max length / password |
+
+`setPasteFilter()` works the same on TextBox, TextArea and ComboBox:
+
+```cpp
+tb->setPasteFilter([](const std::string& in) {
+    // normalize CRLF, strip control chars/BOM, truncate...
+    return sanitized;   // "" = ignore this paste
+});
+```
 
 **Keyboard controls:**
 
@@ -441,6 +451,10 @@ sv->setContentSize(600, 400);
 | `setScrollbarWidth(px)` | `void` | Visual width; `0` = auto (touch 24 / desktop 10) |
 | `setScrollbarHitWidth(px)` | `void` | Hit/drag width; `0` = visual width |
 | `scrollbarWidth()` / `scrollbarHitWidth()` | `int` | Effective widths |
+| `setPanningEnabled(h, v)` | `void` | Enable/disable finger panning per axis |
+| `panningEnabledX()` / `panningEnabledY()` | `bool` | Query axis panning |
+
+Hiding a scrollbar does not disable panning. Lock an axis explicitly when content should not be dragged (for example `setPanningEnabled(false, true)` for a chat view with long unwrapped URLs).
 
 ScrollView clips its children to its own bounds using `SDL_SetRenderClipRect`. Content is temporarily offset during rendering. Hit-testing properly accounts for scroll offset.
 
@@ -512,6 +526,7 @@ win.setBackgroundColor(sdlgui::Color(30, 30, 40));
 | `setResizable(bool)` | `void` | Toggle window resizability at runtime |
 | `requestRedraw()` | `void` | Force another frame to be rendered |
 | `needsRedraw()` | `bool` | Whether the next `render()` would actually draw |
+| `showTextInput()` | `bool` | Ask the platform to show the IME for the focused widget |
 | `valid()` | `bool` | Whether SDL window/renderer creation succeeded |
 | `root()` | `Widget&` | Get root widget for adding children |
 | `handle()` | `SDL_Window*` | Get native SDL window handle |
@@ -564,6 +579,7 @@ app.run();  // Blocks until quit
 | `setTouchTargetPadding(px)` | `void` | Extra hit-test padding in touch mode |
 | `setKeyboardInset(px)` | `void` | Reserve bottom space for an on-screen keyboard |
 | `refreshTextInputArea()` | `void` | Re-push the focused caret rect to the platform IME |
+| `startTextInput()` | `void` | Show the IME for the focused editor (call on resume/gesture) |
 
 **Callbacks:**
 
@@ -584,7 +600,7 @@ app.setKeyboardInset(imeBottomPx / uiScale);
 
 Also set the activity window to `SOFT_INPUT_ADJUST_NOTHING`. Otherwise Android pans/resizes the window in addition to the library's inset, and you get double keyboard height.
 
-The library records the pre-keyboard area height, so if the OS still resizes the window, the inset is only applied for the part the system has not already removed. Layout changes also re-push the caret rectangle to the IME automatically; call `refreshTextInputArea()` manually if you move a focused editor without a layout pass.
+The library records the pre-keyboard area height (and resets it on width/rotation changes). If the OS still resizes the window, the inset is only applied for the part the system has not already removed, in both event orders: resize-then-inset and inset-then-resize. Layout changes also re-push the caret rectangle to the IME automatically; call `refreshTextInputArea()` manually if you move a focused editor without a layout pass. To re-open the keyboard yourself (resume, gesture, toolbar button), call `app.startTextInput()` or `win.showTextInput()`; the raw `SDL_ScreenKeyboardShown()` check is not reliable on all Android devices.
 
 #### Keyboard Focus
 
@@ -691,6 +707,7 @@ The text area is editable: typing, Backspace/Delete, Left/Right/Home/End and Ctr
 | `selectedIndex()` | `int` | Get selected index |
 | `setSelectedIndex(int)` | `void` | Select an item and copy it into the text field |
 | `setText(string)` / `text()` | `void` / `string` | Set/get the current text |
+| `setPasteFilter(filter)` | `void` | Sanitize clipboard text before insert; `""` ignores the paste |
 | `onItemSelected` | callback | `void(int)` when an item is chosen |
 | `onTextChanged` | callback | `void(const string&)` when the text is edited |
 | `isPopupOpen()` / `closePopup()` | `bool` / `void` | Query/close the dropdown |
@@ -826,6 +843,7 @@ ta->setText("Line 1\nLine 2\nLine 3");
 | `setWordWrap(bool)` | `void` | Enable/disable automatic wrapping (default `true`) |
 | `setContentInsets(l,t,r,b)` | `void` | Text/caret/selection inner insets |
 | `setBorderVisible(bool)` / `setBackgroundVisible(bool)` | `void` | Toggle border/background painting |
+| `setPasteFilter(filter)` | `void` | Sanitize clipboard text before insert; `""` ignores the paste |
 | `wordWrap()` | `bool` | Whether wrapping is enabled |
 | `setShowLineNumbers(bool)` | `void` | Show a line-number gutter |
 | `setAutoIndent(bool)` | `void` | Enter copies the current line's indentation; adds a level after `{`, `[` or `(` |
@@ -1768,6 +1786,7 @@ pw->setPlaceholder("密码");
 | `setPlaceholderColor(Color)` | `void` | 设置占位符颜色 |
 | `setContentInsets(l,t,r,b)` | `void` | 文本/光标/选区的内边距 |
 | `setBorderVisible(bool)` / `setBackgroundVisible(bool)` | `void` | 开关边框/背景绘制 |
+| `setPasteFilter(filter)` | `void` | 粘贴前清洗剪贴板文本；返回 `""` 表示忽略本次粘贴 |
 | `setMaxLength(int)` | `void` | 限制 N 个 Unicode 码点；`0` 表示不限制 |
 | `setPassword(bool)` | `void` | 以掩码显示文本 |
 | `setPasswordChar(char)` | `void` | 设置掩码字符（默认 `*`） |
@@ -1782,6 +1801,15 @@ pw->setPlaceholder("密码");
 | `clr(Color)` | `Widget*` | 链式 setTextColor |
 | `bgClr(Color)` | `Widget*` | 链式 setBackgroundColor |
 | `ph(string)` / `maxLen(int)` / `pwd(bool)` | `Widget*` | 链式占位符 / 最大长度 / 密码 |
+
+`setPasteFilter()` 在 TextBox、TextArea 和 ComboBox 上用法相同：
+
+```cpp
+tb->setPasteFilter([](const std::string& in) {
+    // 归一化 CRLF、去掉控制字符/BOM、截断……
+    return sanitized;   // 返回 "" 表示忽略本次粘贴
+});
+```
 
 **键盘控制：**
 
@@ -1824,6 +1852,10 @@ sv->setContentSize(600, 400);
 | `setScrollbarWidth(px)` | `void` | 视觉宽度；`0` = 自动（触摸 24 / 桌面 10） |
 | `setScrollbarHitWidth(px)` | `void` | 命中/拖动宽度；`0` = 等于视觉宽度 |
 | `scrollbarWidth()` / `scrollbarHitWidth()` | `int` | 实际生效宽度 |
+| `setPanningEnabled(h, v)` | `void` | 按轴开关手指平移 |
+| `panningEnabledX()` / `panningEnabledY()` | `bool` | 查询各轴是否允许平移 |
+
+隐藏滚动条不会禁用平移；需要锁住某个轴时显式调用（例如聊天正文里有长 URL 不能横向拖动时用 `setPanningEnabled(false, true)`）。
 
 ScrollView 通过 `SDL_SetRenderClipRect` 将子控件裁剪到自身边界内。渲染时内容会临时偏移。命中检测已正确处理滚动偏移。
 
@@ -1895,6 +1927,7 @@ win.setBackgroundColor(sdlgui::Color(30, 30, 40));
 | `setResizable(bool)` | `void` | 运行时切换窗口可缩放性 |
 | `requestRedraw()` | `void` | 强制再渲染一帧 |
 | `needsRedraw()` | `bool` | 下一次 `render()` 是否真的会绘制 |
+| `showTextInput()` | `bool` | 为当前焦点控件请求显示输入法 |
 | `valid()` | `bool` | SDL 窗口/渲染器是否创建成功 |
 | `root()` | `Widget&` | 获取根控件，用于添加子控件 |
 | `handle()` | `SDL_Window*` | 获取原生 SDL 窗口句柄 |
@@ -1947,6 +1980,7 @@ app.run();  // 阻塞至退出
 | `setTouchTargetPadding(px)` | `void` | 触摸模式下扩大命中区域 |
 | `setKeyboardInset(px)` | `void` | 为软键盘预留底部空间 |
 | `refreshTextInputArea()` | `void` | 重新把焦点光标矩形同步给平台输入法 |
+| `startTextInput()` | `void` | 为当前焦点编辑器显示输入法（可在 resume/手势中调用） |
 
 **回调：**
 
@@ -1967,7 +2001,7 @@ app.setKeyboardInset(imeBottomPx / uiScale);
 
 同时把 Activity 窗口设为 `SOFT_INPUT_ADJUST_NOTHING`。否则系统会在库的 inset 之外再 pan/resize 一次，出现双倍键盘高度。
 
-库会记录键盘弹出前的可用高度：即使系统仍然 resize 了窗口，也只会补扣系统尚未扣除的部分，不会重复减一次。布局变化后会自动刷新输入法光标矩形；如果你在不触发布局的情况下移动了焦点控件，可手动调用 `refreshTextInputArea()`。
+库会记录键盘弹出前的可用高度（宽度变化/旋转时重置）。“先 resize 后 inset”和“先 inset 后 resize”两种顺序下都只会补扣系统尚未扣除的部分，不会重复减一次。布局变化后会自动刷新输入法光标矩形；如果你在不触发布局的情况下移动了焦点控件，可手动调用 `refreshTextInputArea()`。需要在 resume、手势或工具栏按钮里主动弹出键盘时，调用 `app.startTextInput()` 或 `win.showTextInput()`；不要依赖 `SDL_ScreenKeyboardShown()`，部分 Android 设备在键盘隐藏后仍返回 true。
 
 #### 键盘焦点
 
@@ -2073,6 +2107,7 @@ cb->onTextChanged = [](const std::string& text) { /* ... */ };
 | `selectedIndex()` | `int` | 获取选中索引 |
 | `setSelectedIndex(int)` | `void` | 选中并同步到文本框 |
 | `setText(string)` / `text()` | `void` / `string` | 设置/获取文本 |
+| `setPasteFilter(filter)` | `void` | 粘贴前清洗剪贴板文本；返回 `""` 表示忽略本次粘贴 |
 | `onItemSelected` | 回调 | `void(int)`，选择项目时触发 |
 | `onTextChanged` | 回调 | `void(const string&)`，文本编辑时触发 |
 | `isPopupOpen()` / `closePopup()` | `bool` / `void` | 查询/关闭下拉 |
@@ -2208,6 +2243,7 @@ ta->setText("第一行\n第二行\n第三行");
 | `setWordWrap(bool)` | `void` | 开启/关闭自动换行（默认 `true`） |
 | `setContentInsets(l,t,r,b)` | `void` | 文本/光标/选区的内边距 |
 | `setBorderVisible(bool)` / `setBackgroundVisible(bool)` | `void` | 开关边框/背景绘制 |
+| `setPasteFilter(filter)` | `void` | 粘贴前清洗剪贴板文本；返回 `""` 表示忽略本次粘贴 |
 | `wordWrap()` | `bool` | 当前是否自动换行 |
 | `setShowLineNumbers(bool)` | `void` | 显示行号栏 |
 | `setAutoIndent(bool)` | `void` | 换行时沿用当前行缩进；行尾为 `{`、`[`、`(` 时增加一级 |
