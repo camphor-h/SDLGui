@@ -273,6 +273,33 @@ split->setPaneSize(1, 96);   // bottom composer stays 96px tall
 
 Only one fixed pane is needed; if both are set the first wins and the second gets the remainder. `setMinPaneSize()` clamps the fixed size when space is tight. Dragging the divider or calling `setSplit()` clears fixed panes and returns to ratio mode.
 
+**FlowLayout**
+
+Wraps visible children into rows:
+
+```cpp
+auto* flow = root.addChild<sdlgui::FlowLayout>();
+flow->setGap(6, 4);          // horizontal / vertical gap
+flow->setRowHeight(26);      // 0 = tallest child in each row
+flow->setAlign(sdlgui::RichTextAlign::Center);
+flow->addChild<sdlgui::Chip>()->sz(80, 26);
+```
+
+`preferredHeight(width)` returns the wrapped height, so `setAutoHeight(true)` works too.
+
+**Chip**
+
+Compact tag with an independent close area:
+
+```cpp
+auto* chip = root.addChild<sdlgui::Chip>();
+chip->setText("attachment.cpp");
+chip->setCloseSize(18);
+chip->setOnClose([]{ /* remove attachment */ });
+```
+
+Clicking the text area does not trigger close; only the × region does.
+
 **Drawer**
 
 A full-size overlay panel with a scrim. Add it as the last child of the root so it covers the other widgets:
@@ -309,8 +336,13 @@ label->setTextColor(sdlgui::Color::Green);
 | `setText(string)` | `void` | Set text content |
 | `setTextColor(Color)` | `void` | Set text color |
 | `setTextAlign(RichTextAlign)` | `void` | Left / Center / Right per line |
+| `setFont(shared_ptr<Font>)` | `void` | Per-label font (null = global font) |
+| `setEllipsis(ElideMode)` | `void` | `None` / `Start` / `Middle` / `End` |
+| `setElideSuffix(string)` | `void` | Keep a trailing suffix such as `.cpp` |
 | `txt(string)` | `Widget*` | Chainable setText |
 | `clr(Color)` | `Widget*` | Chainable setTextColor |
+
+`Font::elide(text, maxWidth, mode, suffix)` is also available as a standalone helper.
 
 #### Button
 
@@ -329,6 +361,7 @@ btn->onClick = [](sdlgui::MouseEvent&) { /* ... */ };
 | `setText(string)` | `void` | Set button text |
 | `setTextColor(Color)` | `void` | Set text color |
 | `setBgColor(Color,Color,Color)` | `void` | Set normal, hover, pressed colors |
+| `setEllipsis(ElideMode)` / `setElideSuffix(string)` | `void` | Ellipsize overflowing text |
 | `txt(string)` | `Widget*` | Chainable setText |
 | `clr(Color)` | `Widget*` | Chainable setTextColor |
 | `bg(Color,Color,Color)` | `Widget*` | Chainable setBgColor |
@@ -527,6 +560,10 @@ win.setBackgroundColor(sdlgui::Color(30, 30, 40));
 | `requestRedraw()` | `void` | Force another frame to be rendered |
 | `needsRedraw()` | `bool` | Whether the next `render()` would actually draw |
 | `showTextInput()` | `bool` | Ask the platform to show the IME for the focused widget |
+| `deviceScale()` | `float` | Real device pixels per logical pixel |
+| `setKeyboardInsetFromInsets(ime, nav = -1)` | `void` | `ime - nav` (nav from system-bar insets when negative) |
+| `setSystemBarInsets(t, b, l, r)` / `systemBarInsets()` | `void` / `Rect` | Store/query logical system-bar insets |
+| `resetKeyboardBaseline()` | `void` | Discard cached pre-keyboard height (fold/split changes) |
 | `valid()` | `bool` | Whether SDL window/renderer creation succeeded |
 | `root()` | `Widget&` | Get root widget for adding children |
 | `handle()` | `SDL_Window*` | Get native SDL window handle |
@@ -596,11 +633,17 @@ SDL3 does not expose the on-screen keyboard height. Register a `WindowInsets` li
 ```cpp
 // Kotlin/Java side: WindowInsets.Type.ime().bottom / uiScale
 app.setKeyboardInset(imeBottomPx / uiScale);
+
+// Or let the window subtract the navigation bar for you:
+win.setSystemBarInsets(navTop, navBottom, navLeft, navRight);
+win.setKeyboardInsetFromInsets(imeBottom, navBottom);
 ```
+
+Android 15+ edge-to-edge IME insets include the navigation bar; `setKeyboardInsetFromInsets()` applies `ime - nav` and falls back to the stored system-bar bottom when `nav` is negative.
 
 Also set the activity window to `SOFT_INPUT_ADJUST_NOTHING`. Otherwise Android pans/resizes the window in addition to the library's inset, and you get double keyboard height.
 
-The library records the pre-keyboard area height (and resets it on width/rotation changes). If the OS still resizes the window, the inset is only applied for the part the system has not already removed, in both event orders: resize-then-inset and inset-then-resize. Layout changes also re-push the caret rectangle to the IME automatically; call `refreshTextInputArea()` manually if you move a focused editor without a layout pass. To re-open the keyboard yourself (resume, gesture, toolbar button), call `app.startTextInput()` or `win.showTextInput()`; the raw `SDL_ScreenKeyboardShown()` check is not reliable on all Android devices.
+The library records the pre-keyboard area height (and resets it on width/rotation changes). If the window height changes while the keyboard is hidden (fold/split-screen), call `resetKeyboardBaseline()`. If the OS still resizes the window, the inset is only applied for the part the system has not already removed, in both event orders: resize-then-inset and inset-then-resize. Layout changes also re-push the caret rectangle to the IME automatically; call `refreshTextInputArea()` manually if you move a focused editor without a layout pass. To re-open the keyboard yourself (resume, gesture, toolbar button), call `app.startTextInput()` or `win.showTextInput()`; the raw `SDL_ScreenKeyboardShown()` check is not reliable on all Android devices.
 
 #### Keyboard Focus
 
@@ -963,6 +1006,34 @@ rt->onLinkClick = [](const std::string& href) {
 
 When the view has focus: `Ctrl+C` / `Cmd+C` copies the selection, `Ctrl+A` / `Cmd+A` selects all, and `Esc` clears it. `setSelectable(false)` disables these shortcuts as well as mouse selection.
 
+**Inline objects (images, formulas, badges)**
+
+A run can carry a texture instead of text. Pass `width`/`height` in logical pixels and use `ascent`/`descent` for baseline alignment; `alt` is inserted into the selectable/copyable document text.
+
+```cpp
+auto formula = std::make_shared<sdlgui::RichTextObject>();
+formula->texture = cachedFormulaTexture;   // NOT owned by RichTextView
+formula->width   = 48;
+formula->height  = 22;
+formula->ascent  = 16;
+formula->descent = 6;
+formula->alt     = "$x^2$";                // copied when selected
+
+sdlgui::RichTextRun r;
+r.object = formula;   // r.text is ignored for layout
+
+sdlgui::RichTextBlock math;
+math.runs = { r };
+math.align = sdlgui::RichTextAlign::Center; // simple display math
+rt->addBlock(math);
+```
+
+- Objects never wrap internally and count as one unit in selection.
+- `ascent == 0` uses the object height as the ascent.
+- An object wider than the line gets its own line and is centered.
+- Textures are reference-counted only through the descriptor; use `RichTextObject::deleter` to release cached textures when the last run is dropped.
+- Call `relayout()` if you mutate an object's size/texture in place.
+
 Blocks can also be placed horizontally, which is useful for message bubbles:
 
 ```cpp
@@ -1063,7 +1134,7 @@ Cell text is wrapped inside its column, participates in selection, and can conta
 
 Selection: drag to select, Shift+click to extend, Ctrl+A / Ctrl+C / Esc when the view has focus. Call `setSelectable(false)` to disable it.
 
-Current scope: paragraphs, headings, code blocks, quotes, list items, tables, mixed fonts/colors, automatic wrapping, links and selection/copy. Inline images and collapsible blocks are not implemented yet.
+Current scope: paragraphs, headings, code blocks, quotes, list items, tables, mixed fonts/colors, automatic wrapping, links, selection/copy and inline texture objects (images/formulas/badges). Collapsible blocks are not implemented yet.
 
 #### Image
 
@@ -1214,6 +1285,18 @@ sdlgui::applyTheme(root, sdlgui::Theme::light());
 ```
 
 `Theme` contains colors for windows, buttons, inputs, panels, lists, scrollbars, menus, popups, TextArea, sliders, title bars, message boxes, checkboxes and SplitView dividers. Individual widgets can still be overridden after applying a theme.
+
+**High-DPI drawing helpers**
+
+```cpp
+float scale = win.deviceScale();               // e.g. 2.748
+float x = sdlgui::snapToDevicePixel(10.3f, scale);
+
+sdlgui::drawLineAA(win.renderer(), 10, 10, 100, 40, sdlgui::Color::White, 1.5f);
+sdlgui::drawCircleAA(win.renderer(), 60, 60, 24, sdlgui::Color::White, 1.5f);
+```
+
+`deviceScale()` is the real pixel/logical ratio, which can differ from `uiScale()` because the logical size is rounded. The AA helpers keep the previous blend mode, so they are safe to call between normal widget draws. `snapToDevicePixel()` helps custom icon/text rendering avoid half-pixel blur.
 
 **Per-widget color APIs:**
 
@@ -1393,7 +1476,7 @@ cv->onDraw = [](SDL_Renderer* r, const sdlgui::Rect& a)
 - No fullscreen API; windows are windowed only
 - The built-in font is a fixed 16px bitmap; runtime `Font` objects can change metrics/drawing, and logical presentation handles HiDPI coordinates, but there is no automatic UI scaling/kerning/ligature handling
 - `Label` wrapping is character-level; `TextArea` uses word-aware wrapping
-- `RichTextView` has no inline images, collapsible blocks, or table row/column spanning yet
+- `RichTextView` supports inline texture objects, but has no collapsible blocks or table row/column spanning yet
 - Legacy `setFontRenderer()` fonts are measured as 8px per character; use `setFont()` for real metrics
 - Redraw-on-demand is whole-window: no partial dirty rectangles
 - Inline IME composition is drawn by TextBox/TextArea; the caret rect is also reported to `SDL_SetTextInputArea` so the candidate window follows it
@@ -1674,6 +1757,33 @@ split->setPaneSize(1, 96);   // 底部输入区固定 96px
 
 通常只需固定一侧；两侧都固定时第一侧优先，第二侧拿剩余空间。空间不足时会被 `setMinPaneSize()` 夹紧。拖动分隔条或调用 `setSplit()` 会清除固定尺寸并回到比例模式。
 
+**FlowLayout（流式布局）**
+
+将可见子控件自动排成多行：
+
+```cpp
+auto* flow = root.addChild<sdlgui::FlowLayout>();
+flow->setGap(6, 4);          // 水平 / 垂直间距
+flow->setRowHeight(26);      // 0 = 按每行最高子控件
+flow->setAlign(sdlgui::RichTextAlign::Center);
+flow->addChild<sdlgui::Chip>()->sz(80, 26);
+```
+
+`preferredHeight(width)` 返回换行后的总高度，可直接配合 `setAutoHeight(true)`。
+
+**Chip（标签块）**
+
+带独立关闭区域的紧凑标签：
+
+```cpp
+auto* chip = root.addChild<sdlgui::Chip>();
+chip->setText("attachment.cpp");
+chip->setCloseSize(18);
+chip->setOnClose([]{ /* 移除附件 */ });
+```
+
+点击文字区域不会删除，只有 × 区域触发关闭。
+
 **Drawer（抽屉）**
 
 带遮罩的全尺寸覆盖面板，适合移动端侧边栏。作为 root 的最后一个子控件添加，确保覆盖其他控件：
@@ -1710,8 +1820,13 @@ label->setTextColor(sdlgui::Color::Green);
 | `setText(string)` | `void` | 设置文本内容 |
 | `setTextColor(Color)` | `void` | 设置文本颜色 |
 | `setTextAlign(RichTextAlign)` | `void` | 按行左/中/右对齐 |
+| `setFont(shared_ptr<Font>)` | `void` | 单独指定字体（null = 全局字体） |
+| `setEllipsis(ElideMode)` | `void` | `None` / `Start` / `Middle` / `End` |
+| `setElideSuffix(string)` | `void` | 保留尾部后缀，例如 `.cpp` |
 | `txt(string)` | `Widget*` | 链式 setText |
 | `clr(Color)` | `Widget*` | 链式 setTextColor |
+
+也可以直接调用 `Font::elide(text, maxWidth, mode, suffix)` 做纯文本省略。
 
 #### Button（按钮）
 
@@ -1730,6 +1845,7 @@ btn->onClick = [](sdlgui::MouseEvent&) { /* ... */ };
 | `setText(string)` | `void` | 设置按钮文本 |
 | `setTextColor(Color)` | `void` | 设置文本颜色 |
 | `setBgColor(Color,Color,Color)` | `void` | 设置正常/悬停/按下颜色 |
+| `setEllipsis(ElideMode)` / `setElideSuffix(string)` | `void` | 超宽文本省略 |
 | `txt(string)` | `Widget*` | 链式 setText |
 | `clr(Color)` | `Widget*` | 链式 setTextColor |
 | `bg(Color,Color,Color)` | `Widget*` | 链式 setBgColor |
@@ -1928,6 +2044,10 @@ win.setBackgroundColor(sdlgui::Color(30, 30, 40));
 | `requestRedraw()` | `void` | 强制再渲染一帧 |
 | `needsRedraw()` | `bool` | 下一次 `render()` 是否真的会绘制 |
 | `showTextInput()` | `bool` | 为当前焦点控件请求显示输入法 |
+| `deviceScale()` | `float` | 每个逻辑像素对应的真实设备像素数 |
+| `setKeyboardInsetFromInsets(ime, nav = -1)` | `void` | 使用 `ime - nav`（nav 为负时取系统栏 inset） |
+| `setSystemBarInsets(t, b, l, r)` / `systemBarInsets()` | `void` / `Rect` | 保存/查询逻辑像素系统栏 inset |
+| `resetKeyboardBaseline()` | `void` | 丢弃缓存的键盘前高度（折叠/分屏变化） |
 | `valid()` | `bool` | SDL 窗口/渲染器是否创建成功 |
 | `root()` | `Widget&` | 获取根控件，用于添加子控件 |
 | `handle()` | `SDL_Window*` | 获取原生 SDL 窗口句柄 |
@@ -1997,11 +2117,17 @@ SDL3 不提供软键盘高度。请在 Android Activity 中注册 `WindowInsets`
 ```cpp
 // Kotlin/Java 侧：WindowInsets.Type.ime().bottom / uiScale
 app.setKeyboardInset(imeBottomPx / uiScale);
+
+// 或者让窗口自己减掉导航栏：
+win.setSystemBarInsets(navTop, navBottom, navLeft, navRight);
+win.setKeyboardInsetFromInsets(imeBottom, navBottom);
 ```
+
+Android 15+ 强制 edge-to-edge 时 IME inset 包含导航栏；`setKeyboardInsetFromInsets()` 会按 `ime - nav` 计算，`nav` 为负时使用已保存的系统栏底部 inset。
 
 同时把 Activity 窗口设为 `SOFT_INPUT_ADJUST_NOTHING`。否则系统会在库的 inset 之外再 pan/resize 一次，出现双倍键盘高度。
 
-库会记录键盘弹出前的可用高度（宽度变化/旋转时重置）。“先 resize 后 inset”和“先 inset 后 resize”两种顺序下都只会补扣系统尚未扣除的部分，不会重复减一次。布局变化后会自动刷新输入法光标矩形；如果你在不触发布局的情况下移动了焦点控件，可手动调用 `refreshTextInputArea()`。需要在 resume、手势或工具栏按钮里主动弹出键盘时，调用 `app.startTextInput()` 或 `win.showTextInput()`；不要依赖 `SDL_ScreenKeyboardShown()`，部分 Android 设备在键盘隐藏后仍返回 true。
+库会记录键盘弹出前的可用高度（宽度变化/旋转时重置）。如果键盘隐藏时窗口高度被系统改变（分屏、折叠屏），请调用 `resetKeyboardBaseline()`。“先 resize 后 inset”和“先 inset 后 resize”两种顺序下都只会补扣系统尚未扣除的部分，不会重复减一次。布局变化后会自动刷新输入法光标矩形；如果你在不触发布局的情况下移动了焦点控件，可手动调用 `refreshTextInputArea()`。需要在 resume、手势或工具栏按钮里主动弹出键盘时，调用 `app.startTextInput()` 或 `win.showTextInput()`；不要依赖 `SDL_ScreenKeyboardShown()`，部分 Android 设备在键盘隐藏后仍返回 true。
 
 #### 键盘焦点
 
@@ -2363,6 +2489,34 @@ rt->onLinkClick = [](const std::string& href) {
 
 控件有焦点时：`Ctrl+C` / `Cmd+C` 复制选中文本，`Ctrl+A` / `Cmd+A` 全选，`Esc` 清除选区。`setSelectable(false)` 会同时关闭鼠标选择和这些快捷键。
 
+**行内对象（图片、公式、徽章）**
+
+`RichTextRun` 可以携带纹理对象。`width` / `height` 使用逻辑像素，`ascent` / `descent` 用于基线对齐，`alt` 会进入选择/复制文本。
+
+```cpp
+auto formula = std::make_shared<sdlgui::RichTextObject>();
+formula->texture = cachedFormulaTexture;   // RichTextView 不接管所有权
+formula->width   = 48;
+formula->height  = 22;
+formula->ascent  = 16;
+formula->descent = 6;
+formula->alt     = "$x^2$";
+
+sdlgui::RichTextRun r;
+r.object = formula;   // 设置后不再用 r.text 参与布局
+
+sdlgui::RichTextBlock math;
+math.runs = { r };
+math.align = sdlgui::RichTextAlign::Center; // 可直接做 display math
+rt->addBlock(math);
+```
+
+- 对象整体参与换行，不会被拆开，选中时算一个单位。
+- `ascent == 0` 时用对象高度作为基线以上高度。
+- 对象比行宽更宽时独占一行并居中。
+- 纹理生命周期由应用管理；可用 `RichTextObject::deleter` 在最后一个引用释放时回收缓存。
+- 原地修改对象尺寸/纹理后需要调用 `relayout()`。
+
 Block 也支持水平布局，适合做消息气泡：
 
 ```cpp
@@ -2463,7 +2617,7 @@ rt->addTable(table);
 
 选择：拖动选择、Shift+点击扩展、Ctrl+A / Ctrl+C / Esc（控件有焦点时）。调用 `setSelectable(false)` 可关闭。
 
-当前支持：段落、标题、代码块、引用、列表项、表格、混合字体/颜色、自动换行、链接、选择复制。行内图片、可折叠 block 暂未实现。
+当前支持：段落、标题、代码块、引用、列表项、表格、混合字体/颜色、自动换行、链接、选择复制、行内纹理对象（图片/公式/徽章）。可折叠 block 暂未实现。
 
 #### Image（图片）
 
@@ -2610,6 +2764,18 @@ sdlgui::applyTheme(root, sdlgui::Theme::light());
 ```
 
 `Theme` 包含窗口、按钮、输入框、面板、列表、滚动条、菜单、弹出层、TextArea、Slider、标题栏、消息框、CheckBox 和 SplitView 分隔条的颜色。应用主题后仍可单独覆盖某个控件的颜色。
+
+**高清屏绘制辅助**
+
+```cpp
+float scale = win.deviceScale();               // 例如 2.748
+float x = sdlgui::snapToDevicePixel(10.3f, scale);
+
+sdlgui::drawLineAA(win.renderer(), 10, 10, 100, 40, sdlgui::Color::White, 1.5f);
+sdlgui::drawCircleAA(win.renderer(), 60, 60, 24, sdlgui::Color::White, 1.5f);
+```
+
+`deviceScale()` 是真实设备像素 / 逻辑像素，可能和 `uiScale()` 不同（逻辑尺寸会取整）。AA 辅助函数会恢复之前的混合模式，可安全穿插在普通控件绘制之间。`snapToDevicePixel()` 可让自定义图标/文字落点避开半像素发虚。
 
 **各控件颜色 API：**
 

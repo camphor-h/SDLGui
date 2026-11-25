@@ -92,6 +92,19 @@ struct Color
 };
 
 //==============================================================================
+// Drawing helpers
+//==============================================================================
+//Anti-aliased line/circle drawn in logical coordinates. Uses the current
+//render blend mode and restores it.
+void drawLineAA(SDL_Renderer* renderer, float x1, float y1,
+                float x2, float y2, Color color,
+                float thickness = 1.0f);
+void drawCircleAA(SDL_Renderer* renderer, float cx, float cy, float radius,
+                  Color color, float thickness = 1.0f);
+//Round a logical coordinate to the nearest device pixel boundary.
+float snapToDevicePixel(float value, float deviceScale);
+
+//==============================================================================
 // Theme
 //==============================================================================
 struct Theme
@@ -261,6 +274,14 @@ private:
 //==============================================================================
 // Font
 //==============================================================================
+enum class ElideMode
+{
+    None,
+    Start,
+    Middle,
+    End
+};
+
 class Font
 {
 public:
@@ -270,6 +291,11 @@ public:
     {
         return (uint64_t)(uintptr_t)this;
     }
+
+    //Shorten text to maxWidth. suffix (e.g. ".cpp") is kept when possible.
+    //Uses "…" as the ellipsis. ElideMode::None returns text unchanged.
+    std::string elide(const std::string& text, int maxWidth,
+                      ElideMode mode, const std::string& suffix = std::string()) const;
 
     virtual int lineHeight() const { return 16; }
     virtual int ascent() const { return 16; }
@@ -507,6 +533,7 @@ protected:
     friend class ScrollView;
     friend class TextArea;
     friend class Box;
+    friend class FlowLayout;
     friend class SplitView;
 };
 
@@ -554,6 +581,69 @@ class VBox : public Box
 public:
     explicit VBox(Widget* parent = nullptr)
         : Box(parent, Orientation::Vertical) {}
+};
+
+//==============================================================================
+// FlowLayout — wrapping row of child widgets
+//==============================================================================
+class FlowLayout : public Widget
+{
+public:
+    explicit FlowLayout(Widget* parent = nullptr);
+
+    void setGap(int x, int y);
+    int  gapX() const { return gapX_; }
+    int  gapY() const { return gapY_; }
+    void setRowHeight(int px); //0 = use the tallest child in each row
+    int  rowHeight() const { return rowHeight_; }
+    void setAlign(RichTextAlign align);
+    RichTextAlign align() const { return align_; }
+
+    int preferredHeight(int width) const override;
+    int preferredWidth(int height) const override;
+
+protected:
+    void layoutChildren() override;
+
+private:
+    int gapX_ = 6;
+    int gapY_ = 6;
+    int rowHeight_ = 0;
+    RichTextAlign align_ = RichTextAlign::Left;
+};
+
+//==============================================================================
+// Chip — compact label with an optional close button
+//==============================================================================
+class Chip : public Widget
+{
+public:
+    explicit Chip(Widget* parent = nullptr);
+
+    void setText(const std::string& text);
+    const std::string& text() const { return text_; }
+    void setOnClose(std::function<void()> cb) { onClose_ = std::move(cb); }
+    void setCloseSize(int px);
+    int  closeSize() const { return closeSize_; }
+    void setColors(Color background, Color text, Color border, Color close);
+
+    int preferredHeight(int width) const override;
+    int preferredWidth(int height) const override;
+
+protected:
+    void onRender(SDL_Renderer* renderer) override;
+
+private:
+    bool inClose(int x) const;
+
+    std::string text_;
+    std::function<void()> onClose_;
+    int   closeSize_ = 18;
+    bool  pressedClose_ = false;
+    Color bgColor_ = Color(55, 55, 62);
+    Color textColor_ = Color(230, 230, 230);
+    Color borderColor_ = Color(90, 90, 100);
+    Color closeColor_ = Color(180, 180, 190);
 };
 
 //==============================================================================
@@ -726,10 +816,15 @@ public:
     void     setTextColor(Color color);
     void     setWordWrap(bool wrap);
     void     setTextAlign(RichTextAlign align);
+    void     setFont(std::shared_ptr<Font> font);
+    void     setEllipsis(ElideMode mode);
+    void     setElideSuffix(const std::string& suffix);
     const std::string& text()      const { return text_; }
     Color    textColor()           const { return textColor_; }
     bool     wordWrap()            const { return wordWrap_; }
     RichTextAlign textAlign()      const { return textAlign_; }
+    std::shared_ptr<Font> font() const { return font_; }
+    ElideMode ellipsis() const     { return ellipsis_; }
 
     int      preferredHeight(int width) const override;
     int      preferredWidth(int height) const override;
@@ -742,10 +837,15 @@ protected:
     void onFontChanged() override;
 
 private:
+    Font* activeFont() const { return font_ ? font_.get() : currentFont(); }
+
     std::string text_;
     Color       textColor_ = Color::White;
     bool        wordWrap_  = false;
     RichTextAlign textAlign_ = RichTextAlign::Left;
+    std::shared_ptr<Font> font_;
+    ElideMode   ellipsis_ = ElideMode::None;
+    std::string elideSuffix_;
     std::vector<std::string> layout_;
     int         layoutWidth_ = -1;
     bool        layoutWrap_  = false;
@@ -766,7 +866,10 @@ public:
     void     setTextColor(Color color);
     void     setBgColor(Color normal, Color hover, Color pressed);
     void     setBorderColor(Color color);
+    void     setEllipsis(ElideMode mode);
+    void     setElideSuffix(const std::string& suffix);
     const std::string& text() const { return text_; }
+    ElideMode ellipsis() const { return ellipsis_; }
 
     int preferredHeight(int width) const override;
     int preferredWidth(int height) const override;
@@ -781,6 +884,8 @@ protected:
 
 private:
     std::string text_;
+    ElideMode   ellipsis_ = ElideMode::None;
+    std::string elideSuffix_;
     ButtonState state_ = ButtonState::Normal;
     Color       textColor_ = Color::White;
     Color       bgNormal_  = Color(60, 60, 60);
@@ -1616,9 +1721,27 @@ struct RichTextStyle
     bool  underline = false;
 };
 
+//Inline non-text object (image, formula, badge). The texture is NOT owned by
+//RichTextView; keep it alive as long as any run references this object.
+struct RichTextObject
+{
+    SDL_Texture* texture = nullptr;
+    int width = 0;          // logical pixels
+    int height = 0;
+    int ascent = 0;         // pixels above the baseline; 0 = height
+    int descent = 0;        // pixels below the baseline
+    std::string alt;        // selection/copy text, e.g. "$x^2$"
+
+    //Optional hook for cached textures. Called when the last shared_ptr
+    //referencing this object is released.
+    std::function<void(SDL_Texture*)> deleter;
+    ~RichTextObject() { if (deleter && texture) deleter(texture); }
+};
+
 struct RichTextRun
 {
     std::string  text;
+    std::shared_ptr<RichTextObject> object; // when set, text is ignored for layout
     RichTextStyle style;
     std::string  href;
 };
@@ -1752,11 +1875,13 @@ private:
         int  docOffset = 0;
         bool space = false;
         bool breakable = false;
+        bool object = false;
     };
 
     struct PlacedRun
     {
         std::string  text;
+        std::shared_ptr<RichTextObject> object;
         RichTextStyle style;
         std::string  href;
         Font*        font = nullptr;
@@ -1837,7 +1962,7 @@ private:
     void  appendWrappedLine(const RichTextBlock& block, int blockId, int baseX,
                             const std::vector<Glyph>& glyphs,
                             int start, int end, int& y, int& maxRight,
-                            bool code);
+                            bool code, int avail);
     void  appendEmptyLine(const RichTextBlock& block, int blockId, int baseX,
                           int& y);
     void  appendTableLines(const RichTextBlock& block, int blockId,
@@ -1940,6 +2065,14 @@ public:
     //Logical pixels reserved at the bottom for an on-screen keyboard.
     void     setKeyboardInset(int px);
     int      keyboardInset() const { return keyboardInset_; }
+    //Android edge-to-edge helper: imeBottom includes the navigation bar.
+    //navBottom < 0 uses the value from setSystemBarInsets().
+    void     setKeyboardInsetFromInsets(int imeBottom, int navBottom = -1);
+    //System bar insets in logical pixels (Rect: x=left, y=top, w=right, h=bottom).
+    void     setSystemBarInsets(int top, int bottom, int left, int right);
+    Rect     systemBarInsets() const { return systemBars_; }
+    //Discard the cached pre-keyboard height (fold/split-screen changes).
+    void     resetKeyboardBaseline();
     //Explicitly show the on-screen keyboard for the focused widget.
     //Returns false if the window or focus is not available.
     bool     showTextInput();
@@ -1953,6 +2086,8 @@ public:
     int                clientWidth()     const { return clientWidth_; }
     int                clientHeight()    const { return clientHeight_; }
     bool               resizable()       const { return resizable_; }
+    //Real device pixels per logical pixel (pixelW / clientWidth).
+    float              deviceScale()     const;
     const Theme&       theme()           const { return theme_; }
     SDL_Window*        handle()          const { return sdlWindow_; }
     SDL_Renderer*      renderer()        const { return renderer_; }
@@ -2003,6 +2138,7 @@ private:
     int           keyboardInset_   = 0;
     int           baseAreaH_       = 0; //area height without the IME
     int           baseAreaW_       = 0; //width the baseline was captured at
+    Rect          systemBars_      = { 0, 0, 0, 0 }; //left, top, right, bottom
     bool          shown_           = false;
     bool          redraw_          = true;
     uint64_t      lastBlinkPhase_  = 0;
@@ -2193,6 +2329,87 @@ static bool isTextEditableWidget(Widget* w)
     return dynamic_cast<TextBox*>(w) != nullptr
         || dynamic_cast<ComboBox*>(w) != nullptr
         || dynamic_cast<TextArea*>(w) != nullptr;
+}
+
+float snapToDevicePixel(float value, float deviceScale)
+{
+    if (deviceScale <= 0.0f) return value;
+    return std::round(value * deviceScale) / deviceScale;
+}
+
+void drawLineAA(SDL_Renderer* renderer, float x1, float y1,
+                float x2, float y2, Color color, float thickness)
+{
+    if (!renderer || color.a == 0) return;
+
+    float dx = x2 - x1;
+    float dy = y2 - y1;
+    float len = std::sqrt(dx * dx + dy * dy);
+    if (len < 0.0001f) return;
+
+    float nx = -dy / len;
+    float ny =  dx / len;
+    float half = std::max(0.5f, thickness * 0.5f);
+    float feather = 0.75f;
+
+    SDL_BlendMode prev = SDL_BLENDMODE_NONE;
+    SDL_GetRenderDrawBlendMode(renderer, &prev);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+    SDL_FColor fc = { color.r / 255.0f, color.g / 255.0f,
+                      color.b / 255.0f, color.a / 255.0f };
+    SDL_FColor fa = { color.r / 255.0f, color.g / 255.0f,
+                      color.b / 255.0f, 0.0f };
+
+    auto make = [](float x, float y, const SDL_FColor& c)
+    {
+        SDL_Vertex v;
+        v.position = SDL_FPoint{ x, y };
+        v.color = c;
+        v.tex_coord = SDL_FPoint{ 0.0f, 0.0f };
+        return v;
+    };
+
+    SDL_Vertex v[8];
+    int idx[18] = { 0,1,2, 0,2,3,
+                    0,3,5, 0,5,4,
+                    1,6,7, 1,7,2 };
+
+    //core quad
+    v[0] = make(x1 + nx * half, y1 + ny * half, fc);
+    v[1] = make(x1 - nx * half, y1 - ny * half, fc);
+    v[2] = make(x2 - nx * half, y2 - ny * half, fc);
+    v[3] = make(x2 + nx * half, y2 + ny * half, fc);
+
+    //feather along each side
+    float ft = half + feather;
+    v[4] = make(x1 + nx * ft, y1 + ny * ft, fa);
+    v[5] = make(x2 + nx * ft, y2 + ny * ft, fa);
+    v[6] = make(x1 - nx * ft, y1 - ny * ft, fa);
+    v[7] = make(x2 - nx * ft, y2 - ny * ft, fa);
+
+    SDL_RenderGeometry(renderer, nullptr, v, 8, idx, 18);
+    SDL_SetRenderDrawBlendMode(renderer, prev);
+}
+
+void drawCircleAA(SDL_Renderer* renderer, float cx, float cy, float radius,
+                  Color color, float thickness)
+{
+    if (!renderer || radius <= 0.0f) return;
+
+    int segments = std::max(24, std::min(128, (int)(radius * 2.0f)));
+    float step = 6.28318530718f / (float)segments;
+    float px = cx + radius;
+    float py = cy;
+    for (int i = 1; i <= segments; ++i)
+    {
+        float a = step * (float)i;
+        float x = cx + radius * std::cos(a);
+        float y = cy + radius * std::sin(a);
+        drawLineAA(renderer, px, py, x, y, color, thickness);
+        px = x;
+        py = y;
+    }
 }
 
 //==============================================================================
@@ -2921,6 +3138,93 @@ Font* currentFont()
 {
     return detail::activeFont_ ? detail::activeFont_.get()
                                : defaultFont().get();
+}
+
+std::string Font::elide(const std::string& text, int maxWidth,
+                        ElideMode mode, const std::string& suffix) const
+{
+    if (mode == ElideMode::None)
+        return text;
+    if (text.empty() || maxWidth <= 0)
+        return std::string();
+
+    if (measure(text.c_str()) <= maxWidth)
+        return text;
+
+    auto takePrefix = [this](const std::string& s, int w) -> std::string
+    {
+        const char* base = s.c_str();
+        const char* p = base;
+        int used = 0;
+        while (*p)
+        {
+            const char* prev = p;
+            uint32_t cp = detail::decodeUTF8(p);
+            int a = advance(cp);
+            if (used + a > w) { p = prev; break; }
+            used += a;
+        }
+        return s.substr(0, (std::size_t)(p - base));
+    };
+
+    auto takeSuffix = [this](const std::string& s, int w) -> std::string
+    {
+        struct CP { std::size_t off; int adv; };
+        std::vector<CP> cps;
+        const char* base = s.c_str();
+        const char* p = base;
+        while (*p)
+        {
+            const char* prev = p;
+            uint32_t cp = detail::decodeUTF8(p);
+            cps.push_back({ (std::size_t)(prev - base), advance(cp) });
+        }
+
+        int used = 0;
+        std::size_t start = cps.size();
+        while (start > 0)
+        {
+            int a = cps[start - 1].adv;
+            if (used + a > w) break;
+            used += a;
+            --start;
+        }
+        return s.substr(start == cps.size() ? s.size() : cps[start].off);
+    };
+
+    std::string fixedTail;
+    std::string body = text;
+    if (!suffix.empty() && text.size() > suffix.size() &&
+        text.compare(text.size() - suffix.size(), suffix.size(), suffix) == 0)
+    {
+        fixedTail = suffix;
+        body.resize(text.size() - suffix.size());
+    }
+
+    const std::string ell = "\xE2\x80\xA6";
+    int ellW = measure(ell.c_str());
+    int tailW = fixedTail.empty() ? 0 : measure(fixedTail.c_str());
+    int avail = maxWidth - ellW - tailW;
+
+    if (avail < 0)
+    {
+        if (mode == ElideMode::Start)
+            return takeSuffix(text, maxWidth);
+        return takePrefix(text, maxWidth);
+    }
+
+    if (mode == ElideMode::Start)
+        return ell + takeSuffix(body, avail) + fixedTail;
+
+    if (mode == ElideMode::Middle)
+    {
+        int leftW = avail / 2;
+        int rightW = avail - leftW;
+        return takePrefix(body, leftW) + ell +
+               takeSuffix(body, rightW) + fixedTail;
+    }
+
+    return takePrefix(body, avail) + ell + fixedTail;
 }
 
 uint64_t fontEpoch()
@@ -3827,6 +4131,253 @@ int Box::preferredHeight(int) const
 }
 
 //==============================================================================
+// FlowLayout
+//==============================================================================
+FlowLayout::FlowLayout(Widget* parent)
+    : Widget(parent)
+{
+}
+
+void FlowLayout::setGap(int x, int y)
+{
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if (gapX_ == x && gapY_ == y) return;
+    gapX_ = x;
+    gapY_ = y;
+    relayout();
+}
+
+void FlowLayout::setRowHeight(int px)
+{
+    if (px < 0) px = 0;
+    if (rowHeight_ == px) return;
+    rowHeight_ = px;
+    relayout();
+}
+
+void FlowLayout::setAlign(RichTextAlign align)
+{
+    if (align_ == align) return;
+    align_ = align;
+    relayout();
+}
+
+int FlowLayout::preferredWidth(int) const
+{
+    int total = 0;
+    int n = 0;
+    for (auto& child : children_)
+    {
+        if (!child->visible()) continue;
+        int cw = child->autoWidth() ? child->preferredWidth(height_)
+                                    : child->width();
+        total += cw;
+        ++n;
+    }
+    if (n > 1) total += gapX_ * (n - 1);
+    return total;
+}
+
+int FlowLayout::preferredHeight(int width) const
+{
+    int avail = (width > 0) ? width : width_;
+    int x = 0;
+    int y = 0;
+    int rowH = 0;
+    int n = 0;
+
+    for (auto& child : children_)
+    {
+        if (!child->visible()) continue;
+        int cw = child->autoWidth() ? child->preferredWidth(height_)
+                                    : child->width();
+        int ch = (rowHeight_ > 0) ? rowHeight_
+               : (child->autoHeight() ? child->preferredHeight(cw)
+                                      : child->height());
+        int need = (n == 0) ? cw : x + gapX_ + cw;
+        if (n > 0 && need > avail)
+        {
+            y += rowH + gapY_;
+            x = 0;
+            rowH = 0;
+            n = 0;
+            need = cw;
+        }
+        x = need;
+        rowH = std::max(rowH, ch);
+        ++n;
+    }
+
+    if (n > 0) y += rowH;
+    return y;
+}
+
+void FlowLayout::layoutChildren()
+{
+    struct Row
+    {
+        std::vector<Widget*> items;
+        std::vector<int> widths;
+        std::vector<int> heights;
+        int totalW = 0;
+        int height = 0;
+    };
+
+    std::vector<Row> rows;
+    Row cur;
+    int avail = std::max(1, width_);
+
+    for (auto& child : children_)
+    {
+        if (!child->visible()) continue;
+        int cw = child->autoWidth() ? child->preferredWidth(height_)
+                                    : child->width();
+        int ch = (rowHeight_ > 0) ? rowHeight_
+               : (child->autoHeight() ? child->preferredHeight(cw)
+                                      : child->height());
+
+        int need = cur.items.empty() ? cw : cur.totalW + gapX_ + cw;
+        if (!cur.items.empty() && need > avail)
+        {
+            rows.push_back(cur);
+            cur = Row();
+            need = cw;
+        }
+
+        cur.items.push_back(child.get());
+        cur.widths.push_back(cw);
+        cur.heights.push_back(ch);
+        cur.totalW = need;
+        cur.height = std::max(cur.height, ch);
+    }
+    if (!cur.items.empty())
+        rows.push_back(cur);
+
+    int y = 0;
+    for (auto& row : rows)
+    {
+        int rowH = (rowHeight_ > 0) ? rowHeight_ : row.height;
+        int x = 0;
+        if (align_ == RichTextAlign::Center)
+            x = (width_ - row.totalW) / 2;
+        else if (align_ == RichTextAlign::Right)
+            x = width_ - row.totalW;
+        if (x < 0) x = 0;
+
+        for (std::size_t i = 0; i < row.items.size(); ++i)
+        {
+            row.items[i]->setBoundsInternal(x, y, row.widths[i], rowH);
+            x += row.widths[i] + gapX_;
+        }
+        y += rowH + gapY_;
+    }
+}
+
+//==============================================================================
+// Chip
+//==============================================================================
+Chip::Chip(Widget* parent)
+    : Widget(parent)
+{
+    onMouseDown = [this](MouseEvent& e)
+    {
+        if (e.button != SDL_BUTTON_LEFT) return;
+        pressedClose_ = inClose(e.x);
+        markDirty();
+    };
+    onMouseUp = [this](MouseEvent& e)
+    {
+        bool fire = pressedClose_ && e.button == SDL_BUTTON_LEFT && inClose(e.x);
+        pressedClose_ = false;
+        markDirty();
+        if (fire && onClose_) onClose_();
+    };
+}
+
+bool Chip::inClose(int x) const
+{
+    return x >= width_ - closeSize_ - 4;
+}
+
+void Chip::setText(const std::string& text)
+{
+    text_ = text;
+    markDirty();
+    updateAutoSize();
+}
+
+void Chip::setCloseSize(int px)
+{
+    if (px < 8) px = 8;
+    if (closeSize_ == px) return;
+    closeSize_ = px;
+    markDirty();
+    updateAutoSize();
+}
+
+void Chip::setColors(Color background, Color text, Color border, Color close)
+{
+    bgColor_ = background;
+    textColor_ = text;
+    borderColor_ = border;
+    closeColor_ = close;
+    markDirty();
+}
+
+int Chip::preferredHeight(int) const
+{
+    return std::max(20, currentFont()->lineHeight() + 8);
+}
+
+int Chip::preferredWidth(int) const
+{
+    return detail::textWidth(text_.c_str()) + closeSize_ + 24;
+}
+
+void Chip::onRender(SDL_Renderer* renderer)
+{
+    if (!visible_) return;
+
+    Rect r = absoluteRect();
+    detail::ClipGuard clip(renderer, r.x, r.y, r.w, r.h);
+
+    SDL_FRect bg = { (float)r.x, (float)r.y, (float)r.w, (float)r.h };
+    SDL_SetRenderDrawColor(renderer, bgColor_.r, bgColor_.g, bgColor_.b, bgColor_.a);
+    SDL_RenderFillRect(renderer, &bg);
+
+    SDL_SetRenderDrawColor(renderer, borderColor_.r, borderColor_.g,
+                           borderColor_.b, borderColor_.a);
+    SDL_RenderRect(renderer, &bg);
+
+    int pad = 8;
+    int closeW = closeSize_ + 4;
+    int textW = std::max(1, r.w - pad - closeW);
+    std::string shown = text_;
+    if (detail::textWidth(shown.c_str()) > textW)
+        shown = currentFont()->elide(shown, textW, ElideMode::End);
+
+    int lineH = currentFont()->lineHeight();
+    int ty = r.y + (r.h - lineH) / 2;
+    detail::drawText(renderer, shown.c_str(), r.x + pad, ty, textColor_);
+
+    int ccx = r.x + r.w - closeW / 2;
+    int ccy = r.y + r.h / 2;
+    int half = std::max(3, closeSize_ / 3);
+    SDL_SetRenderDrawColor(renderer, closeColor_.r, closeColor_.g,
+                           closeColor_.b, closeColor_.a);
+    SDL_RenderLine(renderer, (float)(ccx - half), (float)(ccy - half),
+                   (float)(ccx + half), (float)(ccy + half));
+    SDL_RenderLine(renderer, (float)(ccx + half), (float)(ccy - half),
+                   (float)(ccx - half), (float)(ccy + half));
+
+    for (auto& child : children_)
+        child->onRender(renderer);
+
+    dirty_ = false;
+}
+
+//==============================================================================
 // SplitView
 //==============================================================================
 SplitView::SplitView(Widget* parent)
@@ -4336,22 +4887,47 @@ void Label::setWordWrap(bool wrap)
     updateAutoSize();
 }
 
+void Label::setFont(std::shared_ptr<Font> font)
+{
+    if (font_ == font) return;
+    font_ = std::move(font);
+    layoutWidth_ = -1;
+    layoutFontEpoch_ = 0;
+    markDirty();
+    updateAutoSize();
+}
+
+void Label::setEllipsis(ElideMode mode)
+{
+    if (ellipsis_ == mode) return;
+    ellipsis_ = mode;
+    markDirty();
+}
+
+void Label::setElideSuffix(const std::string& suffix)
+{
+    elideSuffix_ = suffix;
+    markDirty();
+}
+
 int Label::preferredHeight(int width) const
 {
+    Font* font = activeFont();
     int wrapW = (wordWrap_ && width > 0) ? width : 0x7fffffff;
     std::vector<std::string> lines;
     detail::wrapText(text_.c_str(), wrapW, lines);
-    int lineH = currentFont()->lineHeight();
+    int lineH = font->lineHeight();
     return std::max(1, (int)lines.size() * lineH);
 }
 
 int Label::preferredWidth(int) const
 {
+    Font* font = activeFont();
     std::vector<std::string> lines;
     detail::wrapText(text_.c_str(), 0x7fffffff, lines);
     int widest = 0;
     for (auto& line : lines)
-        widest = std::max(widest, detail::textWidth(line.c_str()));
+        widest = std::max(widest, font->measure(line.c_str()));
     return widest;
 }
 
@@ -4387,22 +4963,28 @@ void Label::onRender(SDL_Renderer* renderer)
         layoutFontEpoch_ = fontEpoch();
     }
 
-    int lineH = currentFont()->lineHeight();
+    Font* font = activeFont();
+    int lineH = font->lineHeight();
     int curY = r.y;
     for (const auto& line : layout_)
     {
         if (!line.empty())
         {
+            std::string shown = line;
+            if (ellipsis_ != ElideMode::None &&
+                font->measure(shown.c_str()) > r.w)
+                shown = font->elide(shown, r.w, ellipsis_, elideSuffix_);
+
             int x = r.x;
             if (textAlign_ != RichTextAlign::Left)
             {
-                int tw = detail::textWidth(line.c_str());
+                int tw = font->measure(shown.c_str());
                 if (textAlign_ == RichTextAlign::Center)
                     x = r.x + (r.w - tw) / 2;
                 else
                     x = r.x + r.w - tw;
             }
-            detail::drawText(renderer, line.c_str(), x, curY, textColor_);
+            detail::drawText(font, renderer, shown.c_str(), x, curY, textColor_);
         }
         curY += lineH;
     }
@@ -4463,6 +5045,19 @@ void Button::setBorderColor(Color color)
     markDirty();
 }
 
+void Button::setEllipsis(ElideMode mode)
+{
+    if (ellipsis_ == mode) return;
+    ellipsis_ = mode;
+    markDirty();
+}
+
+void Button::setElideSuffix(const std::string& suffix)
+{
+    elideSuffix_ = suffix;
+    markDirty();
+}
+
 void Button::onRender(SDL_Renderer* renderer)
 {
     if (!visible_) return;
@@ -4497,9 +5092,13 @@ void Button::onRender(SDL_Renderer* renderer)
 
     //text
     Color tc = enabled_ ? textColor_ : Color(textColor_.r * 2 / 3, textColor_.g * 2 / 3, textColor_.b * 2 / 3);
-    int tx = r.x + (r.w - detail::textWidth(text_.c_str())) / 2;
+    std::string shown = text_;
+    if (ellipsis_ != ElideMode::None && r.w > 8 &&
+        detail::textWidth(shown.c_str()) > r.w - 8)
+        shown = currentFont()->elide(shown, r.w - 8, ellipsis_, elideSuffix_);
+    int tx = r.x + (r.w - detail::textWidth(shown.c_str())) / 2;
     int ty = r.y + (r.h - currentFont()->lineHeight()) / 2;
-    detail::drawText(renderer, text_.c_str(), tx, ty, tc);
+    detail::drawText(renderer, shown.c_str(), tx, ty, tc);
 
     for (auto& child : children_)
         child->onRender(renderer);
@@ -7861,6 +8460,12 @@ int RichTextView::hitTestDocOffset(int localX, int localY) const
                 int x = mx - run.x;
                 if (x < 0) x = 0;
                 if (x > run.width) x = run.width;
+                if (run.object)
+                {
+                    int len = run.object->alt.empty()
+                            ? 1 : (int)run.object->alt.size();
+                    return run.docOffset + (x >= run.width / 2 ? len : 0);
+                }
                 if (!run.font) return run.docOffset;
 
                 int byte = 0;
@@ -7933,7 +8538,8 @@ void RichTextView::appendWrappedLine(const RichTextBlock& block, int blockId,
                                      int baseX,
                                      const std::vector<Glyph>& glyphs,
                                      int start, int end,
-                                     int& y, int& maxRight, bool code)
+                                     int& y, int& maxRight, bool code,
+                                     int avail)
 {
     RichLine line;
     line.block = blockId;
@@ -7972,8 +8578,12 @@ void RichTextView::appendWrappedLine(const RichTextBlock& block, int blockId,
 
         const RichTextRun& run = block.runs[runIndex];
         PlacedRun pr;
-        pr.text = run.text.substr((std::size_t)segStart,
-                                  (std::size_t)(segEnd - segStart));
+        pr.object = run.object;
+        if (glyphs[i].object)
+            pr.text = run.object ? run.object->alt : std::string();
+        else
+            pr.text = run.text.substr((std::size_t)segStart,
+                                      (std::size_t)(segEnd - segStart));
         pr.style = run.style;
         pr.href = run.href;
         pr.font = runFont(run.style);
@@ -7988,6 +8598,14 @@ void RichTextView::appendWrappedLine(const RichTextBlock& block, int blockId,
 
     line.width = width;
     line.height = std::max(height, 1);
+
+    //An object wider than the line gets its own centered line.
+    if (line.runs.size() == 1 && line.runs[0].object &&
+        line.runs[0].width > avail)
+    {
+        int offset = (avail - line.runs[0].width) / 2;
+        line.runs[0].x = line.x + offset;
+    }
 
     for (const auto& run : line.runs)
     {
@@ -8052,8 +8670,12 @@ void RichTextView::appendCellLines(int blockId,
 
             const RichTextRun& run = runs[runIndex];
             PlacedRun pr;
-            pr.text = run.text.substr((std::size_t)segStart,
-                                      (std::size_t)(segEnd - segStart));
+            pr.object = run.object;
+            if (glyphs[i].object)
+                pr.text = run.object ? run.object->alt : std::string();
+            else
+                pr.text = run.text.substr((std::size_t)segStart,
+                                          (std::size_t)(segEnd - segStart));
             pr.style = run.style;
             pr.href = run.href;
             pr.font = runFont(run.style);
@@ -8125,6 +8747,27 @@ void RichTextView::appendCellLines(int blockId,
         const RichTextRun& run = runs[ri];
         Font* font = runFont(run.style);
         int runDocStart = docCursor;
+
+        if (run.object)
+        {
+            const RichTextObject& obj = *run.object;
+            Glyph g;
+            g.run = ri;
+            g.start = 0;
+            g.end = 0;
+            g.advance = std::max(1, obj.width);
+            g.lineHeight = std::max(font->lineHeight(),
+                                    std::max(1, obj.height));
+            int asc = (obj.ascent > 0) ? obj.ascent
+                    : (obj.height > 0 ? obj.height : font->ascent());
+            g.ascent = std::min(g.lineHeight, std::max(1, asc));
+            g.docOffset = runDocStart;
+            g.object = true;
+            glyphs.push_back(g);
+            docCursor += (int)obj.alt.size();
+            continue;
+        }
+
         const char* base = run.text.c_str();
         const char* p = base;
 
@@ -8262,7 +8905,7 @@ void RichTextView::appendBlockLines(const RichTextBlock& block, int blockId,
         else if (!block.wrap || code)
         {
             appendWrappedLine(block, blockId, baseX, glyphs, 0,
-                              (int)glyphs.size(), y, maxRight, code);
+                              (int)glyphs.size(), y, maxRight, code, avail);
         }
         else
         {
@@ -8289,7 +8932,7 @@ void RichTextView::appendBlockLines(const RichTextBlock& block, int blockId,
                 if (end <= start) end = start + 1;
 
                 appendWrappedLine(block, blockId, baseX, glyphs, start, end,
-                                  y, maxRight, code);
+                                  y, maxRight, code, avail);
                 start = end;
             }
         }
@@ -8301,6 +8944,27 @@ void RichTextView::appendBlockLines(const RichTextBlock& block, int blockId,
         const RichTextRun& run = block.runs[ri];
         Font* font = runFont(run.style);
         int runDocStart = docCursor;
+
+        if (run.object)
+        {
+            const RichTextObject& obj = *run.object;
+            Glyph g;
+            g.run = ri;
+            g.start = 0;
+            g.end = 0;
+            g.advance = std::max(1, obj.width);
+            g.lineHeight = std::max(font->lineHeight(),
+                                    std::max(1, obj.height));
+            int asc = (obj.ascent > 0) ? obj.ascent
+                    : (obj.height > 0 ? obj.height : font->ascent());
+            g.ascent = std::min(g.lineHeight, std::max(1, asc));
+            g.docOffset = runDocStart;
+            g.object = true;
+            glyphs.push_back(g);
+            docCursor += (int)obj.alt.size();
+            continue;
+        }
+
         const char* base = run.text.c_str();
         const char* p = base;
 
@@ -8433,7 +9097,7 @@ void RichTextView::buildLayout()
                 {
                     if (c < (int)row.cells.size())
                         for (const auto& run : row.cells[c].runs)
-                            docText_ += run.text;
+                            docText_ += run.object ? run.object->alt : run.text;
                     if (c + 1 < cols)
                         docText_ += '\t';
                 }
@@ -8444,7 +9108,7 @@ void RichTextView::buildLayout()
         else
         {
             for (const auto& run : block.runs)
-                docText_ += run.text;
+                docText_ += run.object ? run.object->alt : run.text;
         }
     }
 
@@ -8868,7 +9532,7 @@ void RichTextView::onRender(SDL_Renderer* renderer)
         for (const auto& run : line.runs)
         {
             int x = r.x + run.x - scrollX_;
-            if (!run.font) continue;
+            if (!run.font && !run.object) continue;
 
             if (run.style.background.a != 0)
             {
@@ -8880,18 +9544,28 @@ void RichTextView::onRender(SDL_Renderer* renderer)
                 SDL_RenderFillRect(renderer, &bg);
             }
 
+            int runTextLen = run.object
+                           ? (run.object->alt.empty()
+                              ? 1 : (int)run.object->alt.size())
+                           : (int)run.text.size();
+
             if (hasSel)
             {
                 int runStart = run.docOffset;
-                int runEnd = run.docOffset + (int)run.text.size();
+                int runEnd = run.docOffset + runTextLen;
                 int a = std::max(selStart, runStart);
                 int b = std::min(selEnd, runEnd);
                 if (b > a)
                 {
-                    int l0 = a - runStart;
-                    int l1 = b - runStart;
-                    int x0 = x + run.font->measureTo(run.text.c_str(), l0);
-                    int x1 = x + run.font->measureTo(run.text.c_str(), l1);
+                    int x0 = x;
+                    int x1 = x + run.width;
+                    if (!run.object && run.font)
+                    {
+                        int l0 = a - runStart;
+                        int l1 = b - runStart;
+                        x0 = x + run.font->measureTo(run.text.c_str(), l0);
+                        x1 = x + run.font->measureTo(run.text.c_str(), l1);
+                    }
                     SDL_FRect sb = { (float)x0, (float)ly,
                                      (float)(x1 - x0), (float)line.height };
                     SDL_SetRenderDrawColor(renderer, selectionColor_.r,
@@ -8899,6 +9573,36 @@ void RichTextView::onRender(SDL_Renderer* renderer)
                                            selectionColor_.a);
                     SDL_RenderFillRect(renderer, &sb);
                 }
+            }
+
+            if (run.object)
+            {
+                const RichTextObject& obj = *run.object;
+                if (obj.texture && obj.width > 0 && obj.height > 0)
+                {
+                    int asc = (obj.ascent > 0) ? obj.ascent : obj.height;
+                    float fx = (float)x;
+                    float fy = (float)(ly + line.ascent - asc);
+                    float fw = (float)obj.width;
+                    float fh = (float)obj.height;
+
+                    //Keep inline textures on whole device pixels.
+                    if (Window* win = getWindow())
+                    {
+                        float s = win->deviceScale();
+                        if (s > 0.0f)
+                        {
+                            fx = std::round(fx * s) / s;
+                            fy = std::round(fy * s) / s;
+                            fw = std::round(fw * s) / s;
+                            fh = std::round(fh * s) / s;
+                        }
+                    }
+
+                    SDL_FRect dst = { fx, fy, fw, fh };
+                    SDL_RenderTexture(renderer, obj.texture, nullptr, &dst);
+                }
+                continue;
             }
 
             Color color = run.style.color;
@@ -9497,11 +10201,47 @@ void Window::setUseSafeArea(bool on)
     redraw_ = true;
 }
 
+float Window::deviceScale() const
+{
+    if (!sdlWindow_ || clientWidth_ <= 0)
+        return (uiScale_ > 0.0f) ? uiScale_ : 1.0f;
+
+    int pw = 0, ph = 0;
+    SDL_GetWindowSizeInPixels(sdlWindow_, &pw, &ph);
+    if (pw <= 0)
+        return (uiScale_ > 0.0f) ? uiScale_ : 1.0f;
+    return (float)pw / (float)clientWidth_;
+}
+
 void Window::setKeyboardInset(int px)
 {
     if (px < 0) px = 0;
     if (keyboardInset_ == px) return;
     keyboardInset_ = px;
+    layoutRoot();
+    redraw_ = true;
+}
+
+void Window::setKeyboardInsetFromInsets(int imeBottom, int navBottom)
+{
+    if (navBottom < 0)
+        navBottom = systemBars_.h;
+    setKeyboardInset(std::max(0, imeBottom - navBottom));
+}
+
+void Window::setSystemBarInsets(int top, int bottom, int left, int right)
+{
+    if (top < 0) top = 0;
+    if (bottom < 0) bottom = 0;
+    if (left < 0) left = 0;
+    if (right < 0) right = 0;
+    systemBars_ = { left, top, right, bottom };
+}
+
+void Window::resetKeyboardBaseline()
+{
+    baseAreaH_ = 0;
+    baseAreaW_ = 0;
     layoutRoot();
     redraw_ = true;
 }
